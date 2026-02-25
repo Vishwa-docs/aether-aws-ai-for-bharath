@@ -1,0 +1,112 @@
+# ============================================================
+# AETHER Elderly Care System — .gitignore
+# ============================================================
+
+# ─── Environment & Secrets ───────────────────────────────────
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# ─── Python ──────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+*.whl
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.cover
+*.pyo
+
+# ─── Node.js / npm ──────────────────────────────────────────
+node_modules/
+.npm
+.yarn/
+package-lock.json
+yarn.lock
+
+# ─── Dashboard (Vite + React) ───────────────────────────────
+dashboard/dist/
+dashboard/.vite/
+dashboard/node_modules/
+
+# ─── AWS CDK ─────────────────────────────────────────────────
+cdk.out/
+infrastructure/cdk.out/
+
+# ─── Infrastructure build outputs ───────────────────────────
+# CDK compiles .ts → .js/.d.ts/.js.map in place
+infrastructure/bin/*.js
+infrastructure/bin/*.d.ts
+infrastructure/bin/*.js.map
+infrastructure/lib/*.js
+infrastructure/lib/*.d.ts
+infrastructure/lib/*.js.map
+infrastructure/lib/models/*.js
+infrastructure/lib/models/*.d.ts
+infrastructure/lib/models/*.js.map
+
+# ─── IDE / Editors ───────────────────────────────────────────
+.vscode/
+!.vscode/settings.json
+!.vscode/extensions.json
+.kiro/
+!.kiro/
+.idea/
+*.swp
+*.swo
+*~
+
+# ─── OS Files ────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ─── Edge local data & certs ────────────────────────────────
+edge/data/*.db
+edge/data/*.sqlite
+certs/
+*.pem
+*.key
+!edge/models/*.ppn
+!edge/models/*.pv
+
+# ─── Logs ────────────────────────────────────────────────────
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ─── Testing / Coverage ─────────────────────────────────────
+coverage/
+.nyc_output/
+junit.xml
+test-results/
+
+# ─── Misc ────────────────────────────────────────────────────
+*.bak
+*.tmp
+*.temp
+data/synthetic/
+
+
+VK_Inputs/
+.DS_Store
+.env
+create_git_history.sh
