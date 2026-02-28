@@ -1,0 +1,918 @@
+openapi: "3.0.3"
+
+info:
+  title: AETHER REST API
+  version: "1.0.0"
+  description: |
+    Autonomous Elderly Ecosystem for Total Health Emergency Response & Optimization.
+
+    This API serves as the primary interface between AETHER Edge Gateways,
+    caregiver applications, clinical dashboards, and third-party integrations.
+    All endpoints require a valid Cognito JWT bearer token unless otherwise noted.
+  contact:
+    name: AETHER Engineering
+  license:
+    name: Proprietary
+
+servers:
+  - url: https://api.aether.local
+    description: Placeholder – replaced per environment at deploy time
+
+# ---------------------------------------------------------------------------
+# Security
+# ---------------------------------------------------------------------------
+security:
+  - CognitoJWT: []
+
+components:
+  # ---- Security Schemes ----
+  securitySchemes:
+    CognitoJWT:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >
+        AWS Cognito-issued JSON Web Token. Include as
+        `Authorization: Bearer <token>` on every request.
+
+  # ---- Reusable Parameters ----
+  parameters:
+    HomeIdPath:
+      name: home_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Unique identifier of the monitored home.
+
+    ResidentIdPath:
+      name: resident_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Unique identifier of the resident.
+
+    PacketIdPath:
+      name: packet_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Unique identifier of the evidence packet.
+
+  # ---- Schemas ----
+  schemas:
+    # ---- Events ----
+    AetherEvent:
+      type: object
+      required:
+        - event_id
+        - home_id
+        - timestamp
+        - event_type
+        - severity
+        - confidence
+        - data
+        - sources
+      properties:
+        event_id:
+          type: string
+          format: uuid
+          description: Globally unique event identifier generated at the edge.
+        home_id:
+          type: string
+          format: uuid
+          description: Identifier of the home where the event originated.
+        timestamp:
+          type: string
+          format: date-time
+          description: ISO-8601 UTC timestamp when the event was detected.
+        event_type:
+          type: string
+          description: >
+            Canonical event type label (e.g., fall_detected, medication_taken,
+            meal_skipped, hydration_low, wandering, sleep_disruption,
+            environmental_alert, vitals_anomaly).
+          example: fall_detected
+        severity:
+          type: string
+          enum:
+            - info
+            - low
+            - medium
+            - high
+            - critical
+          description: Severity level used to drive escalation logic.
+        confidence:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          description: >
+            Model confidence score (0–1). Values below the configured
+            threshold trigger human review instead of automatic action.
+          example: 0.92
+        data:
+          type: object
+          additionalProperties: true
+          description: >
+            Free-form payload whose shape varies by event_type. May include
+            pose keypoints, sensor readings, medication IDs, environmental
+            metrics, etc.
+        sources:
+          type: array
+          items:
+            type: string
+          description: >
+            List of sensor or data source identifiers that contributed to this
+            event (e.g., camera_living_room, wearable_hr, pill_dispenser).
+          example:
+            - camera_living_room
+            - wearable_imu
+
+    EventCreatedResponse:
+      type: object
+      properties:
+        event_id:
+          type: string
+          format: uuid
+          description: Echo of the accepted event identifier.
+        message:
+          type: string
+          example: Event accepted
+
+    # ---- Timeline ----
+    TimelineEntry:
+      type: object
+      properties:
+        event_id:
+          type: string
+          format: uuid
+          description: Reference to the originating AetherEvent.
+        home_id:
+          type: string
+          format: uuid
+        resident_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Resident associated with this entry, if disambiguated.
+        timestamp:
+          type: string
+          format: date-time
+          description: When the event occurred (UTC).
+        event_type:
+          type: string
+          description: Canonical event type label.
+        severity:
+          type: string
+          enum: [info, low, medium, high, critical]
+        confidence:
+          type: number
+          format: float
+        summary:
+          type: string
+          description: Human-readable summary of the event.
+        source:
+          type: string
+          description: Primary data source for this entry.
+        human_verified:
+          type: boolean
+          description: Whether a caregiver has reviewed and confirmed this entry.
+        annotations:
+          type: array
+          items:
+            $ref: "#/components/schemas/Annotation"
+          description: Caregiver annotations or corrections attached to this entry.
+
+    Annotation:
+      type: object
+      properties:
+        author:
+          type: string
+          description: Display name or ID of the annotating caregiver.
+        text:
+          type: string
+          description: Free-text annotation content.
+        created_at:
+          type: string
+          format: date-time
+
+    # ---- Residents ----
+    ResidentProfile:
+      type: object
+      properties:
+        resident_id:
+          type: string
+          format: uuid
+          description: Unique resident identifier.
+        home_id:
+          type: string
+          format: uuid
+          description: Home where the resident lives.
+        first_name:
+          type: string
+          example: Margaret
+        last_name:
+          type: string
+          example: Chen
+        date_of_birth:
+          type: string
+          format: date
+          description: YYYY-MM-DD date of birth.
+        age:
+          type: integer
+          description: Computed age in years.
+          example: 78
+        conditions:
+          type: array
+          items:
+            type: string
+          description: Active medical conditions (e.g., diabetes, hypertension, COPD).
+          example:
+            - diabetes
+            - hypertension
+        medications:
+          type: array
+          items:
+            $ref: "#/components/schemas/Medication"
+          description: Current medication schedule.
+        frailty_level:
+          type: string
+          enum: [robust, pre_frail, frail]
+          description: Clinical frailty classification.
+        cognitive_status:
+          type: string
+          enum: [normal, mild_impairment, moderate_impairment, severe_impairment]
+          description: Cognitive status assessment.
+        emergency_contacts:
+          type: array
+          items:
+            $ref: "#/components/schemas/EmergencyContact"
+        preferences:
+          $ref: "#/components/schemas/ResidentPreferences"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Medication:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Medication name.
+          example: Metformin
+        dosage:
+          type: string
+          example: 500mg
+        schedule:
+          type: string
+          description: Dosing schedule in human-readable form.
+          example: twice daily with meals
+        prescriber:
+          type: string
+          description: Prescribing physician name.
+
+    EmergencyContact:
+      type: object
+      properties:
+        name:
+          type: string
+          example: David Chen
+        relationship:
+          type: string
+          example: Son
+        phone:
+          type: string
+          example: "+14155551234"
+        escalation_tier:
+          type: integer
+          description: >
+            Tier in the multi-tier escalation chain (1 = first contacted,
+            5 = emergency services).
+          example: 1
+
+    ResidentPreferences:
+      type: object
+      properties:
+        language:
+          type: string
+          description: Preferred language (ISO 639-1).
+          example: en
+        privacy_level:
+          type: string
+          enum: [event_only, summary, full]
+          description: >
+            Data sharing level – event_only (timestamps + labels + confidence),
+            summary (daily digests), full (raw sensor feeds).
+        voice_enabled:
+          type: boolean
+          description: Whether voice interaction is enabled on the Hub.
+
+    # ---- Alerts ----
+    AlertAcknowledgeRequest:
+      type: object
+      required:
+        - event_id
+        - acknowledged_by
+      properties:
+        event_id:
+          type: string
+          format: uuid
+          description: The event/alert being acknowledged.
+        acknowledged_by:
+          type: string
+          description: User ID or name of the person acknowledging the alert.
+
+    AlertAcknowledgeResponse:
+      type: object
+      properties:
+        event_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          example: acknowledged
+        acknowledged_at:
+          type: string
+          format: date-time
+
+    # ---- Evidence Packets ----
+    EvidencePacket:
+      type: object
+      properties:
+        packet_id:
+          type: string
+          format: uuid
+          description: Unique evidence packet identifier.
+        event_id:
+          type: string
+          format: uuid
+          description: Originating event that triggered packet assembly.
+        home_id:
+          type: string
+          format: uuid
+        resident_id:
+          type: string
+          format: uuid
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+          description: When the presigned URL expires.
+        presigned_url:
+          type: string
+          format: uri
+          description: >
+            S3 presigned URL to download the evidence packet (PDF/JSON bundle).
+            Valid for a limited time window.
+        contents:
+          type: array
+          items:
+            type: string
+          description: >
+            List of artefact types included in the packet (e.g.,
+            event_trace, sensor_readings, pose_keypoints, daily_summary).
+          example:
+            - event_trace
+            - sensor_readings
+            - pose_keypoints
+
+    # ---- Care Navigation ----
+    CareNavigationRequest:
+      type: object
+      required:
+        - query
+        - resident_id
+      properties:
+        query:
+          type: string
+          description: Natural-language question from the caregiver or clinician.
+          example: What are the signs that her blood sugar is too low?
+        resident_id:
+          type: string
+          format: uuid
+          description: Context resident for personalised answers.
+        language:
+          type: string
+          description: Desired response language (ISO 639-1). Defaults to en.
+          default: en
+          example: en
+
+    CareNavigationResponse:
+      type: object
+      properties:
+        answer:
+          type: string
+          description: >
+            GenAI-generated answer grounded in clinical sources and the
+            resident's profile.
+        sources:
+          type: array
+          items:
+            $ref: "#/components/schemas/CareSource"
+          description: Citations supporting the answer.
+        disclaimer:
+          type: string
+          description: >
+            Mandatory medical disclaimer reminding users this is not a
+            substitute for professional medical advice.
+          example: >
+            This information is generated by an AI system and is not a
+            substitute for professional medical advice. Always consult a
+            qualified healthcare provider.
+        confidence:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          description: Model confidence in the generated answer.
+        language:
+          type: string
+          description: Language the answer was returned in.
+
+    CareSource:
+      type: object
+      properties:
+        title:
+          type: string
+          description: Source document or guideline title.
+          example: ADA Standards of Medical Care 2025
+        url:
+          type: string
+          format: uri
+          description: Link to the source material, if available.
+        snippet:
+          type: string
+          description: Relevant excerpt from the source.
+
+    # ---- Analytics ----
+    DashboardMetrics:
+      type: object
+      properties:
+        clinic_id:
+          type: string
+          description: Clinic or facility identifier.
+        date_range:
+          type: object
+          properties:
+            start:
+              type: string
+              format: date
+            end:
+              type: string
+              format: date
+        total_events:
+          type: integer
+          description: Total events across all residents in the date range.
+        events_by_severity:
+          type: object
+          properties:
+            info:
+              type: integer
+            low:
+              type: integer
+            medium:
+              type: integer
+            high:
+              type: integer
+            critical:
+              type: integer
+          description: Event counts broken down by severity.
+        events_by_type:
+          type: object
+          additionalProperties:
+            type: integer
+          description: Event counts keyed by event_type.
+        active_residents:
+          type: integer
+          description: Number of residents with at least one event in the range.
+        alert_acknowledgement_rate:
+          type: number
+          format: float
+          description: Fraction of alerts acknowledged within SLA (0–1).
+        mean_response_time_seconds:
+          type: number
+          format: float
+          description: Average time from alert to first human response.
+        fall_detection_accuracy:
+          type: number
+          format: float
+          description: Measured accuracy of fall detection model (0–1).
+        medication_adherence_rate:
+          type: number
+          format: float
+          description: Overall medication adherence rate across residents (0–1).
+
+    # ---- Common Errors ----
+    ErrorResponse:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: integer
+          description: HTTP status code.
+        message:
+          type: string
+          description: Human-readable error description.
+        details:
+          type: object
+          additionalProperties: true
+          description: Optional structured error details (validation errors, etc.).
+        request_id:
+          type: string
+          description: Correlation ID for tracing.
+
+  # ---- Reusable Responses ----
+  responses:
+    BadRequest:
+      description: The request body or parameters are invalid.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            code: 400
+            message: "Validation failed: 'event_type' is required."
+            request_id: "req-abc123"
+
+    Unauthorized:
+      description: Missing or invalid authentication token.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            code: 401
+            message: "Bearer token is missing or expired."
+            request_id: "req-abc123"
+
+    Forbidden:
+      description: Authenticated user lacks permission for this resource.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            code: 403
+            message: "You do not have access to this home."
+            request_id: "req-abc123"
+
+    NotFound:
+      description: The requested resource does not exist.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            code: 404
+            message: "Resource not found."
+            request_id: "req-abc123"
+
+    InternalServerError:
+      description: An unexpected error occurred on the server.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            code: 500
+            message: "Internal server error. Please try again later."
+            request_id: "req-abc123"
+
+# ---------------------------------------------------------------------------
+# Tags
+# ---------------------------------------------------------------------------
+tags:
+  - name: Events
+    description: Ingest and manage events produced by per-home Edge Gateways.
+  - name: Timeline
+    description: >
+      Unified timeline aggregating sensor events, caregiver notes, messages,
+      and AI-generated insights for each home.
+  - name: Residents
+    description: Resident profile management including conditions, medications, and preferences.
+  - name: Alerts
+    description: Alert lifecycle operations – acknowledgement, escalation tracking.
+  - name: Evidence
+    description: >
+      Evidence packet retrieval for clinician handoffs and incident
+      documentation.
+  - name: Care Navigation
+    description: >
+      GenAI-powered question-answering with clinical citations, personalised
+      to the resident's profile and care context.
+  - name: Analytics
+    description: Operational and clinical metrics for clinic dashboards.
+
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+paths:
+  # ---- Events ----
+  /events:
+    post:
+      operationId: submitEvent
+      tags: [Events]
+      summary: Submit event from Edge Gateway
+      description: >
+        Receives a structured event from an AETHER Edge Gateway. The event is
+        validated, persisted, and forwarded to the escalation pipeline. Events
+        with severity >= high trigger immediate alert processing.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AetherEvent"
+      responses:
+        "201":
+          description: Event accepted and queued for processing.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EventCreatedResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  # ---- Timeline ----
+  /timeline/{home_id}:
+    get:
+      operationId: getTimeline
+      tags: [Timeline]
+      summary: Get timeline for a home
+      description: >
+        Returns the unified timeline of events for the specified home within
+        the requested date range. Results are ordered chronologically
+        (most-recent first) and include sensor events, caregiver notes,
+        AI-derived insights, and annotations.
+      parameters:
+        - $ref: "#/components/parameters/HomeIdPath"
+        - name: start_date
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+          description: >
+            Inclusive start date (YYYY-MM-DD, UTC). Defaults to 7 days ago.
+          example: "2026-02-22"
+        - name: end_date
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+          description: >
+            Inclusive end date (YYYY-MM-DD, UTC). Defaults to today.
+          example: "2026-03-01"
+      responses:
+        "200":
+          description: Timeline entries for the requested range.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TimelineEntry"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  # ---- Residents ----
+  /residents/{resident_id}:
+    get:
+      operationId: getResident
+      tags: [Residents]
+      summary: Get resident profile
+      description: >
+        Retrieves the full profile for a resident, including medical
+        conditions, medications, emergency contacts, frailty level, cognitive
+        status, and user preferences.
+      parameters:
+        - $ref: "#/components/parameters/ResidentIdPath"
+      responses:
+        "200":
+          description: Resident profile.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResidentProfile"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+    put:
+      operationId: updateResident
+      tags: [Residents]
+      summary: Update resident profile
+      description: >
+        Performs a partial update of the resident profile. Only the fields
+        included in the request body are modified; omitted fields are left
+        unchanged.
+      parameters:
+        - $ref: "#/components/parameters/ResidentIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResidentProfile"
+            example:
+              conditions:
+                - diabetes
+                - hypertension
+                - osteoarthritis
+              frailty_level: pre_frail
+      responses:
+        "200":
+          description: Resident profile updated successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResidentProfile"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  # ---- Alerts ----
+  /alerts/acknowledge:
+    post:
+      operationId: acknowledgeAlert
+      tags: [Alerts]
+      summary: Acknowledge an alert
+      description: >
+        Records that a caregiver, clinician, or responder has seen and
+        acknowledged an alert. This stops further escalation for the
+        associated event.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AlertAcknowledgeRequest"
+      responses:
+        "200":
+          description: Alert acknowledged.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlertAcknowledgeResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  # ---- Evidence ----
+  /evidence/{packet_id}:
+    get:
+      operationId: getEvidencePacket
+      tags: [Evidence]
+      summary: Get evidence packet
+      description: >
+        Returns metadata and a time-limited presigned S3 URL for downloading
+        the evidence packet. Evidence packets contain event traces with
+        timestamps and confidence scores, relevant sensor readings, pose
+        keypoints, and daily summaries assembled for clinical handoffs.
+      parameters:
+        - $ref: "#/components/parameters/PacketIdPath"
+      responses:
+        "200":
+          description: Evidence packet metadata with presigned download URL.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EvidencePacket"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  # ---- Care Navigation ----
+  /care-navigation/query:
+    post:
+      operationId: queryCareNavigation
+      tags: [Care Navigation]
+      summary: Ask a care navigation question
+      description: >
+        Submits a natural-language question to the AETHER GenAI reasoning
+        layer. The system routes the query through specialised models,
+        personalises the answer using the resident's profile and timeline
+        context, and returns a cited, confidence-scored response with a
+        mandatory medical disclaimer.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CareNavigationRequest"
+      responses:
+        "200":
+          description: AI-generated answer with citations and disclaimer.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CareNavigationResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  # ---- Analytics ----
+  /analytics/dashboard:
+    get:
+      operationId: getDashboardMetrics
+      tags: [Analytics]
+      summary: Get clinic operations dashboard metrics
+      description: >
+        Returns aggregated operational and clinical metrics for a clinic or
+        facility, including event volumes by severity and type, alert response
+        times, medication adherence rates, and fall detection accuracy over
+        the requested date range.
+      parameters:
+        - name: clinic_id
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Identifier of the clinic or assisted-living facility.
+          example: clinic-west-01
+        - name: date_range
+          in: query
+          required: false
+          schema:
+            type: string
+          description: >
+            Date range as "YYYY-MM-DD/YYYY-MM-DD" (start/end, inclusive).
+            Defaults to the last 30 days.
+          example: "2026-02-01/2026-03-01"
+      responses:
+        "200":
+          description: Dashboard metrics for the requested clinic and date range.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardMetrics"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
