@@ -1,0 +1,533 @@
+{
+  "Comment": "AETHER Choking Triage Workflow - Detects choking events via acoustic analysis, triages, and escalates through caregiver/nurse/emergency tiers",
+  "StartAt": "ValidateChokingEvent",
+  "States": {
+    "ValidateChokingEvent": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-event-processor",
+      "Parameters": {
+        "action": "validate",
+        "event.$": "$.detail",
+        "validation_rules": {
+          "required_type": "acoustic_choking",
+          "min_confidence": 0.6
+        }
+      },
+      "ResultPath": "$.validation",
+      "Next": "CheckChokingConfidence",
+      "Retry": [
+        {
+          "ErrorEquals": ["Lambda.ServiceException", "Lambda.TooManyRequestsException"],
+          "IntervalSeconds": 1,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "LogError",
+          "ResultPath": "$.error"
+        }
+      ]
+    },
+    "CheckChokingConfidence": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "And": [
+            {
+              "Variable": "$.validation.valid",
+              "BooleanEquals": true
+            },
+            {
+              "Variable": "$.validation.confidence",
+              "NumericGreaterThan": 0.6
+            }
+          ],
+          "Next": "ParallelEventProcessing"
+        }
+      ],
+      "Default": "LogLowConfidenceEvent"
+    },
+    "ParallelEventProcessing": {
+      "Type": "Parallel",
+      "Comment": "Store event, generate triage card, and archive evidence in parallel",
+      "Branches": [
+        {
+          "StartAt": "StoreChokingEvent",
+          "States": {
+            "StoreChokingEvent": {
+              "Type": "Task",
+              "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-event-processor",
+              "Parameters": {
+                "action": "store",
+                "event.$": "$.detail",
+                "event_category": "choking"
+              },
+              "End": true,
+              "Retry": [
+                {
+                  "ErrorEquals": ["States.ALL"],
+                  "IntervalSeconds": 1,
+                  "MaxAttempts": 2,
+                  "BackoffRate": 2.0
+                }
+              ]
+            }
+          }
+        },
+        {
+          "StartAt": "GenerateTriageCard",
+          "States": {
+            "GenerateTriageCard": {
+              "Type": "Task",
+              "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-event-processor",
+              "Parameters": {
+                "action": "triage",
+                "event.$": "$.detail",
+                "triage_type": "choking",
+                "bedrock_model": "anthropic.claude-3-sonnet",
+                "prompt_context": "Elderly choking event detected via acoustic sensor. Generate triage card with risk assessment and recommended actions."
+              },
+              "ResultPath": "$.triage",
+              "End": true,
+              "Retry": [
+                {
+                  "ErrorEquals": ["ServiceUnavailableException", "ThrottlingException"],
+                  "IntervalSeconds": 2,
+                  "MaxAttempts": 3,
+                  "BackoffRate": 2.0
+                }
+              ]
+            }
+          }
+        },
+        {
+          "StartAt": "StoreEvidenceInS3",
+          "States": {
+            "StoreEvidenceInS3": {
+              "Type": "Task",
+              "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-event-processor",
+              "Parameters": {
+                "action": "evidence",
+                "event.$": "$.detail",
+                "evidence_type": "acoustic_choking",
+                "include_audio_clip": true
+              },
+              "End": true,
+              "Retry": [
+                {
+                  "ErrorEquals": ["States.ALL"],
+                  "IntervalSeconds": 1,
+                  "MaxAttempts": 2,
+                  "BackoffRate": 2.0
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "ResultPath": "$.processing",
+      "Next": "VoicePromptElder",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "DirectEscalation",
+          "ResultPath": "$.parallelError",
+          "Comment": "If parallel processing fails, skip directly to escalation"
+        }
+      ]
+    },
+    "VoicePromptElder": {
+      "Type": "Task",
+      "Comment": "Ask the elder if they are okay via voice prompt on the Edge Gateway",
+      "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-voice-processor",
+      "Parameters": {
+        "action": "prompt",
+        "home_id.$": "$.detail.home_id",
+        "resident_id.$": "$.detail.resident_id",
+        "message": "We detected something unusual. Are you okay? Do you need help? Please say 'I'm okay' if you are fine.",
+        "listen_after": true,
+        "listen_timeout_seconds": 30
+      },
+      "ResultPath": "$.voicePrompt",
+      "Next": "WaitForElderResponse",
+      "Retry": [
+        {
+          "ErrorEquals": ["Lambda.ServiceException"],
+          "IntervalSeconds": 1,
+          "MaxAttempts": 2,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "DirectEscalation",
+          "ResultPath": "$.voiceError",
+          "Comment": "If voice prompt fails, assume distress and escalate"
+        }
+      ]
+    },
+    "WaitForElderResponse": {
+      "Type": "Task",
+      "Comment": "Wait up to 30 seconds for the elder to respond via voice or button press",
+      "Resource": "arn:aws:states:::sqs:sendMessage.waitForTaskToken",
+      "Parameters": {
+        "QueueUrl": "${ElderResponseQueueUrl}",
+        "MessageBody": {
+          "event_id.$": "$.detail.event_id",
+          "home_id.$": "$.detail.home_id",
+          "resident_id.$": "$.detail.resident_id",
+          "prompt_type": "choking_check",
+          "taskToken.$": "$$.Task.Token"
+        }
+      },
+      "TimeoutSeconds": 30,
+      "ResultPath": "$.elderResponse",
+      "Next": "EvaluateElderResponse",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.Timeout"],
+          "Next": "NoResponseEscalation",
+          "ResultPath": "$.timeout",
+          "Comment": "No response within 30 seconds - treat as potential distress"
+        },
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "NoResponseEscalation",
+          "ResultPath": "$.responseError"
+        }
+      ]
+    },
+    "EvaluateElderResponse": {
+      "Type": "Choice",
+      "Comment": "Evaluate whether the elder confirmed they are okay or expressed distress",
+      "Choices": [
+        {
+          "Variable": "$.elderResponse.status",
+          "StringEquals": "confirmed_ok",
+          "Next": "LogFalseAlarm"
+        },
+        {
+          "Variable": "$.elderResponse.status",
+          "StringEquals": "confirmed_distress",
+          "Next": "ConfirmedDistressEscalation"
+        }
+      ],
+      "Default": "NoResponseEscalation"
+    },
+    "LogFalseAlarm": {
+      "Type": "Task",
+      "Comment": "Elder confirmed they are okay - log as false alarm and close",
+      "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-event-processor",
+      "Parameters": {
+        "action": "store",
+        "event.$": "$.detail",
+        "resolution": "false_alarm",
+        "elder_response.$": "$.elderResponse"
+      },
+      "ResultPath": "$.falseAlarm",
+      "Next": "UpdateTimelineFalseAlarm",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "IntervalSeconds": 1,
+          "MaxAttempts": 2,
+          "BackoffRate": 2.0
+        }
+      ]
+    },
+    "UpdateTimelineFalseAlarm": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-timeline-aggregator",
+      "Parameters": {
+        "action": "update",
+        "event.$": "$.detail",
+        "resolution": "false_alarm",
+        "notes": "Choking event resolved - elder confirmed they are okay"
+      },
+      "End": true,
+      "Retry": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "IntervalSeconds": 1,
+          "MaxAttempts": 2,
+          "BackoffRate": 2.0
+        }
+      ]
+    },
+    "ConfirmedDistressEscalation": {
+      "Type": "Task",
+      "Comment": "Elder confirmed distress - immediately notify caregiver",
+      "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-escalation-handler",
+      "Parameters": {
+        "action": "escalate",
+        "event.$": "$.detail",
+        "start_tier": "TIER_1",
+        "auto_advance": true,
+        "message": "CHOKING ALERT: Elder confirmed they need help. Immediate assistance required."
+      },
+      "ResultPath": "$.escalation",
+      "Next": "NotifyCaregiver"
+    },
+    "NoResponseEscalation": {
+      "Type": "Task",
+      "Comment": "No response from elder within 30 seconds - escalate to caregiver",
+      "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-escalation-handler",
+      "Parameters": {
+        "action": "escalate",
+        "event.$": "$.detail",
+        "start_tier": "TIER_1",
+        "auto_advance": true,
+        "message": "CHOKING ALERT: No response from elder after voice prompt. Possible choking in progress."
+      },
+      "ResultPath": "$.escalation",
+      "Next": "NotifyCaregiver"
+    },
+    "DirectEscalation": {
+      "Type": "Task",
+      "Comment": "Processing or voice failed - escalate directly to caregiver",
+      "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-escalation-handler",
+      "Parameters": {
+        "action": "escalate",
+        "event.$": "$.detail",
+        "start_tier": "TIER_1",
+        "auto_advance": true,
+        "message": "CHOKING ALERT: System could not confirm elder status. Immediate attention required."
+      },
+      "ResultPath": "$.escalation",
+      "Next": "NotifyCaregiver"
+    },
+    "NotifyCaregiver": {
+      "Type": "Task",
+      "Comment": "Send notification to caregiver with 60-second response window",
+      "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-escalation-handler",
+      "Parameters": {
+        "action": "escalate",
+        "event.$": "$.detail",
+        "tier": 2,
+        "message": "CHOKING ALERT: Possible choking detected. Please respond within 60 seconds."
+      },
+      "ResultPath": "$.caregiverNotification",
+      "Next": "WaitForCaregiverResponse",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "EscalateToNurseEmergency",
+          "ResultPath": "$.caregiverError"
+        }
+      ]
+    },
+    "WaitForCaregiverResponse": {
+      "Type": "Task",
+      "Comment": "Wait 60 seconds for caregiver to acknowledge",
+      "Resource": "arn:aws:states:::sqs:sendMessage.waitForTaskToken",
+      "Parameters": {
+        "QueueUrl": "${AcknowledgementQueueUrl}",
+        "MessageBody": {
+          "event_id.$": "$.detail.event_id",
+          "escalation.$": "$.escalation",
+          "response_type": "caregiver_ack",
+          "taskToken.$": "$$.Task.Token"
+        }
+      },
+      "TimeoutSeconds": 60,
+      "ResultPath": "$.caregiverResponse",
+      "Next": "EvaluateCaregiverResponse",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.Timeout"],
+          "Next": "EscalateToNurseEmergency",
+          "ResultPath": "$.caregiverTimeout",
+          "Comment": "Caregiver did not respond within 60 seconds"
+        },
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "EscalateToNurseEmergency",
+          "ResultPath": "$.caregiverResponseError"
+        }
+      ]
+    },
+    "EvaluateCaregiverResponse": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.caregiverResponse.acknowledged",
+          "BooleanEquals": true,
+          "Next": "CaregiverHandling"
+        }
+      ],
+      "Default": "EscalateToNurseEmergency"
+    },
+    "CaregiverHandling": {
+      "Type": "Task",
+      "Comment": "Caregiver acknowledged - log and let caregiver handle",
+      "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-escalation-handler",
+      "Parameters": {
+        "action": "log_acknowledged",
+        "event.$": "$.detail",
+        "acknowledgement.$": "$.caregiverResponse",
+        "resolution": "caregiver_handling"
+      },
+      "ResultPath": "$.resolution",
+      "Next": "LogAndComplete",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "LogAndComplete",
+          "ResultPath": "$.resolutionError"
+        }
+      ]
+    },
+    "EscalateToNurseEmergency": {
+      "Type": "Task",
+      "Comment": "No caregiver response - escalate to nurse and emergency services",
+      "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-escalation-handler",
+      "Parameters": {
+        "action": "escalate",
+        "event.$": "$.detail",
+        "tier": 3,
+        "auto_advance": true,
+        "message": "CHOKING EMERGENCY: No caregiver response. Escalating to nurse/emergency services. Possible choking incident in progress."
+      },
+      "ResultPath": "$.nurseEscalation",
+      "Next": "WaitForNurseResponse",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "EmergencyFallback",
+          "ResultPath": "$.nurseError"
+        }
+      ]
+    },
+    "WaitForNurseResponse": {
+      "Type": "Task",
+      "Comment": "Wait for nurse acknowledgement before escalating to emergency",
+      "Resource": "arn:aws:states:::sqs:sendMessage.waitForTaskToken",
+      "Parameters": {
+        "QueueUrl": "${AcknowledgementQueueUrl}",
+        "MessageBody": {
+          "event_id.$": "$.detail.event_id",
+          "escalation.$": "$.nurseEscalation",
+          "response_type": "nurse_ack",
+          "taskToken.$": "$$.Task.Token"
+        }
+      },
+      "TimeoutSeconds": 120,
+      "ResultPath": "$.nurseResponse",
+      "Next": "EvaluateNurseResponse",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.Timeout"],
+          "Next": "EmergencyFallback",
+          "ResultPath": "$.nurseTimeout"
+        },
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "EmergencyFallback",
+          "ResultPath": "$.nurseResponseError"
+        }
+      ]
+    },
+    "EvaluateNurseResponse": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.nurseResponse.acknowledged",
+          "BooleanEquals": true,
+          "Next": "NurseHandling"
+        }
+      ],
+      "Default": "EmergencyFallback"
+    },
+    "NurseHandling": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-escalation-handler",
+      "Parameters": {
+        "action": "log_acknowledged",
+        "event.$": "$.detail",
+        "acknowledgement.$": "$.nurseResponse",
+        "resolution": "nurse_handling"
+      },
+      "ResultPath": "$.resolution",
+      "Next": "LogAndComplete",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "LogAndComplete",
+          "ResultPath": "$.resolutionError"
+        }
+      ]
+    },
+    "EmergencyFallback": {
+      "Type": "Task",
+      "Comment": "No nurse response - contact emergency services (911/108)",
+      "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-escalation-handler",
+      "Parameters": {
+        "action": "emergency",
+        "event.$": "$.detail",
+        "tier": 4,
+        "message": "CHOKING EMERGENCY: No caregiver or nurse response. Contacting emergency services. Possible choking incident."
+      },
+      "ResultPath": "$.emergency",
+      "Next": "LogAndComplete",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "LogError",
+          "ResultPath": "$.emergencyError"
+        }
+      ]
+    },
+    "LogLowConfidenceEvent": {
+      "Type": "Task",
+      "Comment": "Confidence below 0.6 - log for review but do not escalate",
+      "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-event-processor",
+      "Parameters": {
+        "action": "store",
+        "event.$": "$.detail",
+        "resolution": "low_confidence",
+        "notes": "Choking confidence below threshold (0.6). Logged for review."
+      },
+      "ResultPath": "$.lowConfidence",
+      "Next": "LogAndComplete",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "IntervalSeconds": 1,
+          "MaxAttempts": 2,
+          "BackoffRate": 2.0
+        }
+      ]
+    },
+    "LogError": {
+      "Type": "Pass",
+      "Result": {
+        "status": "error",
+        "workflow": "choking_triage"
+      },
+      "ResultPath": "$.result",
+      "End": true
+    },
+    "LogAndComplete": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-timeline-aggregator",
+      "Parameters": {
+        "action": "update",
+        "event.$": "$.detail",
+        "workflow": "choking_triage"
+      },
+      "End": true,
+      "Retry": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "IntervalSeconds": 1,
+          "MaxAttempts": 2,
+          "BackoffRate": 2.0
+        }
+      ]
+    }
+  }
+}

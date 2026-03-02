@@ -1,0 +1,454 @@
+{
+  "Comment": "AETHER Prescription Workflow - Processes new prescriptions via OCR, checks drug interactions, and updates medication schedules",
+  "StartAt": "ProcessPrescriptionOCR",
+  "States": {
+    "ProcessPrescriptionOCR": {
+      "Type": "Task",
+      "Comment": "Extract prescription data from uploaded image/PDF via OCR",
+      "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-prescription-ocr",
+      "Parameters": {
+        "action": "extract",
+        "s3_bucket.$": "$.detail.bucket",
+        "s3_key.$": "$.detail.key",
+        "resident_id.$": "$.detail.resident_id",
+        "home_id.$": "$.detail.home_id"
+      },
+      "ResultPath": "$.ocrResult",
+      "Next": "ValidateOCRResult",
+      "Retry": [
+        {
+          "ErrorEquals": ["Lambda.ServiceException", "Lambda.TooManyRequestsException"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        },
+        {
+          "ErrorEquals": ["TextractServiceException"],
+          "IntervalSeconds": 5,
+          "MaxAttempts": 2,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["OCRExtractionError"],
+          "Next": "HandleOCRFailure",
+          "ResultPath": "$.error"
+        },
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "LogError",
+          "ResultPath": "$.error"
+        }
+      ]
+    },
+    "ValidateOCRResult": {
+      "Type": "Choice",
+      "Comment": "Verify OCR extraction was successful and produced readable data",
+      "Choices": [
+        {
+          "And": [
+            {
+              "Variable": "$.ocrResult.success",
+              "BooleanEquals": true
+            },
+            {
+              "Variable": "$.ocrResult.medications",
+              "IsPresent": true
+            }
+          ],
+          "Next": "CheckPolypharmacy"
+        }
+      ],
+      "Default": "HandleOCRFailure"
+    },
+    "CheckPolypharmacy": {
+      "Type": "Task",
+      "Comment": "Check new medications against existing prescriptions for drug interactions",
+      "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-polypharmacy-checker",
+      "Parameters": {
+        "action": "check_interactions",
+        "resident_id.$": "$.detail.resident_id",
+        "home_id.$": "$.detail.home_id",
+        "new_medications.$": "$.ocrResult.medications",
+        "prescriber.$": "$.ocrResult.prescriber",
+        "prescription_date.$": "$.ocrResult.prescription_date"
+      },
+      "ResultPath": "$.interactionCheck",
+      "Next": "EvaluateInteractions",
+      "Retry": [
+        {
+          "ErrorEquals": ["Lambda.ServiceException", "Lambda.TooManyRequestsException"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "FlagForManualReview",
+          "ResultPath": "$.error",
+          "Comment": "If polypharmacy check fails, flag for manual review rather than auto-approving"
+        }
+      ]
+    },
+    "EvaluateInteractions": {
+      "Type": "Choice",
+      "Comment": "Route based on severity of drug interactions found",
+      "Choices": [
+        {
+          "Variable": "$.interactionCheck.severity",
+          "StringEquals": "severe",
+          "Next": "RequireDoctorApproval"
+        },
+        {
+          "Variable": "$.interactionCheck.severity",
+          "StringEquals": "moderate",
+          "Next": "RequireDoctorApproval"
+        },
+        {
+          "Variable": "$.interactionCheck.severity",
+          "StringEquals": "minor",
+          "Next": "FlagForCaregiverReview"
+        }
+      ],
+      "Default": "AutoApprovePrescription"
+    },
+    "AutoApprovePrescription": {
+      "Type": "Parallel",
+      "Comment": "No interactions found - auto-approve and update medication schedule",
+      "Branches": [
+        {
+          "StartAt": "StorePrescription",
+          "States": {
+            "StorePrescription": {
+              "Type": "Task",
+              "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-event-processor",
+              "Parameters": {
+                "action": "store",
+                "event.$": "$.detail",
+                "data_type": "prescription",
+                "ocrResult.$": "$.ocrResult",
+                "status": "approved",
+                "approval_type": "auto"
+              },
+              "End": true,
+              "Retry": [
+                {
+                  "ErrorEquals": ["States.ALL"],
+                  "IntervalSeconds": 1,
+                  "MaxAttempts": 2,
+                  "BackoffRate": 2.0
+                }
+              ]
+            }
+          }
+        },
+        {
+          "StartAt": "UpdateMedicationSchedule",
+          "States": {
+            "UpdateMedicationSchedule": {
+              "Type": "Task",
+              "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-clinic-ops",
+              "Parameters": {
+                "action": "update_medication_schedule",
+                "resident_id.$": "$.detail.resident_id",
+                "home_id.$": "$.detail.home_id",
+                "medications.$": "$.ocrResult.medications",
+                "effective_date.$": "$.ocrResult.prescription_date"
+              },
+              "End": true,
+              "Retry": [
+                {
+                  "ErrorEquals": ["States.ALL"],
+                  "IntervalSeconds": 1,
+                  "MaxAttempts": 2,
+                  "BackoffRate": 2.0
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "ResultPath": "$.autoApproval",
+      "Next": "NotifyCaregiverNewPrescription",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "LogError",
+          "ResultPath": "$.error"
+        }
+      ]
+    },
+    "FlagForCaregiverReview": {
+      "Type": "Parallel",
+      "Comment": "Minor interactions found - flag for caregiver review before activation",
+      "Branches": [
+        {
+          "StartAt": "StorePrescriptionPendingReview",
+          "States": {
+            "StorePrescriptionPendingReview": {
+              "Type": "Task",
+              "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-event-processor",
+              "Parameters": {
+                "action": "store",
+                "event.$": "$.detail",
+                "data_type": "prescription",
+                "ocrResult.$": "$.ocrResult",
+                "interactionCheck.$": "$.interactionCheck",
+                "status": "pending_caregiver_review"
+              },
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "NotifyCaregiverInteraction",
+          "States": {
+            "NotifyCaregiverInteraction": {
+              "Type": "Task",
+              "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-escalation-handler",
+              "Parameters": {
+                "action": "escalate",
+                "event.$": "$.detail",
+                "tier": 2,
+                "auto_advance": false,
+                "message": "New prescription has minor drug interactions. Please review in the AETHER app before the medication schedule is updated."
+              },
+              "End": true
+            }
+          }
+        }
+      ],
+      "ResultPath": "$.caregiverReview",
+      "Next": "NotifyCaregiverNewPrescription",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "LogError",
+          "ResultPath": "$.error"
+        }
+      ]
+    },
+    "RequireDoctorApproval": {
+      "Type": "Parallel",
+      "Comment": "Moderate or severe interactions - require doctor approval before proceeding",
+      "Branches": [
+        {
+          "StartAt": "StorePrescriptionBlocked",
+          "States": {
+            "StorePrescriptionBlocked": {
+              "Type": "Task",
+              "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-event-processor",
+              "Parameters": {
+                "action": "store",
+                "event.$": "$.detail",
+                "data_type": "prescription",
+                "ocrResult.$": "$.ocrResult",
+                "interactionCheck.$": "$.interactionCheck",
+                "status": "blocked_pending_doctor_approval"
+              },
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "NotifyDoctorInteraction",
+          "States": {
+            "NotifyDoctorInteraction": {
+              "Type": "Task",
+              "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-escalation-handler",
+              "Parameters": {
+                "action": "escalate",
+                "event.$": "$.detail",
+                "tier": 3,
+                "auto_advance": false,
+                "message.$": "States.Format('DRUG INTERACTION ALERT: {} interaction(s) detected for new prescription. Severity: {}. Doctor review and approval required before medication schedule can be updated.', $.interactionCheck.interaction_count, $.interactionCheck.severity)"
+              },
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "NotifyCaregiverBlocked",
+          "States": {
+            "NotifyCaregiverBlocked": {
+              "Type": "Task",
+              "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-escalation-handler",
+              "Parameters": {
+                "action": "escalate",
+                "event.$": "$.detail",
+                "tier": 2,
+                "auto_advance": false,
+                "message": "New prescription has been flagged for drug interaction concerns. A doctor must review and approve before the medication schedule can be updated."
+              },
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "GenerateInteractionReport",
+          "States": {
+            "GenerateInteractionReport": {
+              "Type": "Task",
+              "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-doc-generator",
+              "Parameters": {
+                "action": "generate_interaction_report",
+                "resident_id.$": "$.detail.resident_id",
+                "home_id.$": "$.detail.home_id",
+                "ocrResult.$": "$.ocrResult",
+                "interactionCheck.$": "$.interactionCheck"
+              },
+              "ResultPath": "$.interactionReport",
+              "End": true,
+              "Retry": [
+                {
+                  "ErrorEquals": ["ServiceUnavailableException", "ThrottlingException"],
+                  "IntervalSeconds": 2,
+                  "MaxAttempts": 3,
+                  "BackoffRate": 2.0
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "ResultPath": "$.doctorReview",
+      "Next": "NotifyCaregiverNewPrescription",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "LogError",
+          "ResultPath": "$.error"
+        }
+      ]
+    },
+    "FlagForManualReview": {
+      "Type": "Task",
+      "Comment": "Polypharmacy check failed - flag for manual pharmacist review",
+      "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-escalation-handler",
+      "Parameters": {
+        "action": "escalate",
+        "event.$": "$.detail",
+        "tier": 3,
+        "auto_advance": false,
+        "message": "Automated drug interaction check failed. Please manually review the new prescription for potential interactions before approving."
+      },
+      "ResultPath": "$.manualReview",
+      "Next": "NotifyCaregiverNewPrescription",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "LogError",
+          "ResultPath": "$.error"
+        }
+      ]
+    },
+    "HandleOCRFailure": {
+      "Type": "Task",
+      "Comment": "OCR extraction failed - notify caregiver to manually enter prescription",
+      "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-escalation-handler",
+      "Parameters": {
+        "action": "escalate",
+        "event.$": "$.detail",
+        "tier": 2,
+        "auto_advance": false,
+        "message": "Prescription image could not be read automatically. Please enter the prescription details manually in the AETHER app."
+      },
+      "ResultPath": "$.ocrFailure",
+      "Next": "LogAndComplete",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "LogError",
+          "ResultPath": "$.error"
+        }
+      ]
+    },
+    "NotifyCaregiverNewPrescription": {
+      "Type": "Task",
+      "Comment": "Notify caregiver that a new prescription has been processed",
+      "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-escalation-handler",
+      "Parameters": {
+        "action": "voice_reminder",
+        "event.$": "$.detail",
+        "message": "A new prescription has been processed. Please check the AETHER app for details and any required actions."
+      },
+      "ResultPath": "$.caregiverNotification",
+      "Next": "SendFamilyPortalSummary",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "IntervalSeconds": 1,
+          "MaxAttempts": 2,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "SendFamilyPortalSummary",
+          "ResultPath": "$.notifyError",
+          "Comment": "Continue to family portal even if caregiver notification fails"
+        }
+      ]
+    },
+    "SendFamilyPortalSummary": {
+      "Type": "Task",
+      "Comment": "Send prescription summary to the family portal",
+      "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-family-portal",
+      "Parameters": {
+        "action": "send_prescription_summary",
+        "resident_id.$": "$.detail.resident_id",
+        "home_id.$": "$.detail.home_id",
+        "ocrResult.$": "$.ocrResult",
+        "status": "processed"
+      },
+      "ResultPath": "$.familyPortal",
+      "Next": "LogAndComplete",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "IntervalSeconds": 1,
+          "MaxAttempts": 2,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "LogAndComplete",
+          "ResultPath": "$.familyPortalError"
+        }
+      ]
+    },
+    "LogError": {
+      "Type": "Pass",
+      "Result": {
+        "status": "error",
+        "workflow": "prescription_processing"
+      },
+      "ResultPath": "$.result",
+      "End": true
+    },
+    "LogAndComplete": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-timeline-aggregator",
+      "Parameters": {
+        "action": "update",
+        "event.$": "$.detail",
+        "workflow": "prescription_processing"
+      },
+      "End": true,
+      "Retry": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "IntervalSeconds": 1,
+          "MaxAttempts": 2,
+          "BackoffRate": 2.0
+        }
+      ]
+    }
+  }
+}

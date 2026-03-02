@@ -1,0 +1,371 @@
+{
+  "Comment": "AETHER Daily Wellness Check Workflow - Runs every morning at 8 AM to aggregate sensor data, generate wellness briefs, and check medication compliance for all active residents",
+  "StartAt": "FetchActiveResidents",
+  "States": {
+    "FetchActiveResidents": {
+      "Type": "Task",
+      "Comment": "Retrieve all active residents for the daily wellness check",
+      "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-clinic-ops",
+      "Parameters": {
+        "action": "list_active_residents"
+      },
+      "ResultPath": "$.residents",
+      "Next": "ProcessEachResident",
+      "Retry": [
+        {
+          "ErrorEquals": ["Lambda.ServiceException", "Lambda.TooManyRequestsException"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "LogError",
+          "ResultPath": "$.error"
+        }
+      ]
+    },
+    "ProcessEachResident": {
+      "Type": "Map",
+      "Comment": "Process each active resident in parallel - aggregate data, check medications, detect anomalies",
+      "ItemsPath": "$.residents.active_residents",
+      "MaxConcurrency": 10,
+      "Parameters": {
+        "resident.$": "$$.Map.Item.Value",
+        "check_date.$": "$.check_date"
+      },
+      "Iterator": {
+        "StartAt": "ResidentParallelProcessing",
+        "States": {
+          "ResidentParallelProcessing": {
+            "Type": "Parallel",
+            "Comment": "Sub-tasks per resident: sensor aggregation, wellness brief, medication compliance, overnight anomalies",
+            "Branches": [
+              {
+                "StartAt": "AggregateSensorData",
+                "States": {
+                  "AggregateSensorData": {
+                    "Type": "Task",
+                    "Comment": "Aggregate last 24 hours of sensor data for the resident",
+                    "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-analytics-processor",
+                    "Parameters": {
+                      "action": "aggregate_24hr",
+                      "resident_id.$": "$.resident.resident_id",
+                      "home_id.$": "$.resident.home_id",
+                      "include_sensors": ["motion", "door", "bed", "bathroom", "vitals", "environmental"]
+                    },
+                    "ResultPath": "$.sensorAggregation",
+                    "End": true,
+                    "Retry": [
+                      {
+                        "ErrorEquals": ["States.ALL"],
+                        "IntervalSeconds": 2,
+                        "MaxAttempts": 2,
+                        "BackoffRate": 2.0
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "StartAt": "GenerateMorningWellnessBrief",
+                "States": {
+                  "GenerateMorningWellnessBrief": {
+                    "Type": "Task",
+                    "Comment": "Generate a morning wellness brief via Bedrock for the resident",
+                    "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-doc-generator",
+                    "Parameters": {
+                      "action": "generate_wellness_brief",
+                      "resident_id.$": "$.resident.resident_id",
+                      "home_id.$": "$.resident.home_id",
+                      "brief_type": "morning",
+                      "include_vitals_summary": true,
+                      "include_sleep_quality": true,
+                      "include_activity_summary": true
+                    },
+                    "ResultPath": "$.wellnessBrief",
+                    "End": true,
+                    "Retry": [
+                      {
+                        "ErrorEquals": ["ServiceUnavailableException", "ThrottlingException"],
+                        "IntervalSeconds": 2,
+                        "MaxAttempts": 3,
+                        "BackoffRate": 2.0
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "StartAt": "CheckMedicationCompliance",
+                "States": {
+                  "CheckMedicationCompliance": {
+                    "Type": "Task",
+                    "Comment": "Check medication compliance from the previous day",
+                    "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-event-processor",
+                    "Parameters": {
+                      "action": "check_medication_status",
+                      "resident_id.$": "$.resident.resident_id",
+                      "home_id.$": "$.resident.home_id",
+                      "lookback_hours": 24
+                    },
+                    "ResultPath": "$.medicationCompliance",
+                    "End": true,
+                    "Retry": [
+                      {
+                        "ErrorEquals": ["States.ALL"],
+                        "IntervalSeconds": 2,
+                        "MaxAttempts": 2,
+                        "BackoffRate": 2.0
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "StartAt": "CheckOvernightAnomalies",
+                "States": {
+                  "CheckOvernightAnomalies": {
+                    "Type": "Task",
+                    "Comment": "Check for any overnight anomalies (unusual movement, vitals spikes, etc.)",
+                    "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-health-insights",
+                    "Parameters": {
+                      "action": "check_anomalies",
+                      "resident_id.$": "$.resident.resident_id",
+                      "home_id.$": "$.resident.home_id",
+                      "period": "overnight",
+                      "lookback_hours": 12,
+                      "anomaly_types": ["movement", "vitals", "sleep", "bathroom_frequency", "temperature"]
+                    },
+                    "ResultPath": "$.overnightAnomalies",
+                    "End": true,
+                    "Retry": [
+                      {
+                        "ErrorEquals": ["States.ALL"],
+                        "IntervalSeconds": 2,
+                        "MaxAttempts": 2,
+                        "BackoffRate": 2.0
+                      }
+                    ]
+                  }
+                }
+              }
+            ],
+            "ResultPath": "$.residentData",
+            "End": true,
+            "Catch": [
+              {
+                "ErrorEquals": ["States.ALL"],
+                "Next": "LogResidentError",
+                "ResultPath": "$.residentError"
+              }
+            ]
+          },
+          "LogResidentError": {
+            "Type": "Pass",
+            "Comment": "Log error for this resident but allow other residents to continue",
+            "Result": {
+              "status": "error",
+              "message": "Failed to process resident wellness check"
+            },
+            "ResultPath": "$.residentResult",
+            "End": true
+          }
+        }
+      },
+      "ResultPath": "$.residentResults",
+      "Next": "GenerateDailyHealthReport",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "LogError",
+          "ResultPath": "$.error"
+        }
+      ]
+    },
+    "GenerateDailyHealthReport": {
+      "Type": "Task",
+      "Comment": "Generate a comprehensive daily health report for all residents via Bedrock",
+      "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-doc-generator",
+      "Parameters": {
+        "action": "generate_daily_report",
+        "resident_results.$": "$.residentResults",
+        "report_type": "daily_wellness",
+        "include_summary": true,
+        "include_anomalies": true,
+        "include_medication_compliance": true
+      },
+      "ResultPath": "$.dailyReport",
+      "Next": "SendMorningBriefToCaregiver",
+      "Retry": [
+        {
+          "ErrorEquals": ["ServiceUnavailableException", "ThrottlingException"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "SendMorningBriefToCaregiver",
+          "ResultPath": "$.reportError",
+          "Comment": "Continue sending brief even if full report generation fails"
+        }
+      ]
+    },
+    "SendMorningBriefToCaregiver": {
+      "Type": "Task",
+      "Comment": "Send the morning wellness brief to the caregiver via push/SMS",
+      "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-escalation-handler",
+      "Parameters": {
+        "action": "voice_reminder",
+        "event": {
+          "event_type": "daily_wellness_brief",
+          "home_id.$": "$.home_id"
+        },
+        "message": "Good morning! Your AETHER daily wellness report is ready. Check the app for overnight summaries and today's care priorities."
+      },
+      "ResultPath": "$.caregiverBrief",
+      "Next": "CheckTelehealthAppointments",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "IntervalSeconds": 1,
+          "MaxAttempts": 2,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "CheckTelehealthAppointments",
+          "ResultPath": "$.briefError"
+        }
+      ]
+    },
+    "CheckTelehealthAppointments": {
+      "Type": "Task",
+      "Comment": "Check if any residents have telehealth appointments today",
+      "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-clinic-ops",
+      "Parameters": {
+        "action": "check_todays_appointments",
+        "home_id.$": "$.home_id",
+        "appointment_type": "telehealth"
+      },
+      "ResultPath": "$.appointments",
+      "Next": "HasTelehealthAppointments",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "IntervalSeconds": 1,
+          "MaxAttempts": 2,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "UpdateTimeline",
+          "ResultPath": "$.appointmentError"
+        }
+      ]
+    },
+    "HasTelehealthAppointments": {
+      "Type": "Choice",
+      "Comment": "Check whether there are telehealth appointments today",
+      "Choices": [
+        {
+          "Variable": "$.appointments.has_appointments",
+          "BooleanEquals": true,
+          "Next": "PreparePreConsultSummaries"
+        }
+      ],
+      "Default": "UpdateTimeline"
+    },
+    "PreparePreConsultSummaries": {
+      "Type": "Map",
+      "Comment": "Generate pre-consult summaries for each telehealth appointment today",
+      "ItemsPath": "$.appointments.todays_appointments",
+      "MaxConcurrency": 5,
+      "Parameters": {
+        "appointment.$": "$$.Map.Item.Value",
+        "residentResults.$": "$.residentResults"
+      },
+      "Iterator": {
+        "StartAt": "GeneratePreConsultSummary",
+        "States": {
+          "GeneratePreConsultSummary": {
+            "Type": "Task",
+            "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-doc-generator",
+            "Parameters": {
+              "action": "generate_preconsult_summary",
+              "resident_id.$": "$.appointment.resident_id",
+              "home_id.$": "$.appointment.home_id",
+              "doctor_id.$": "$.appointment.doctor_id",
+              "appointment_time.$": "$.appointment.appointment_time",
+              "include_recent_vitals": true,
+              "include_medication_adherence": true,
+              "include_recent_events": true,
+              "include_health_trends": true
+            },
+            "ResultPath": "$.preConsultSummary",
+            "End": true,
+            "Retry": [
+              {
+                "ErrorEquals": ["ServiceUnavailableException", "ThrottlingException"],
+                "IntervalSeconds": 2,
+                "MaxAttempts": 3,
+                "BackoffRate": 2.0
+              }
+            ]
+          }
+        }
+      },
+      "ResultPath": "$.preConsultSummaries",
+      "Next": "UpdateTimeline",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "UpdateTimeline",
+          "ResultPath": "$.preConsultError"
+        }
+      ]
+    },
+    "UpdateTimeline": {
+      "Type": "Task",
+      "Comment": "Update the daily timeline with wellness check results",
+      "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-timeline-aggregator",
+      "Parameters": {
+        "action": "update",
+        "event": {
+          "event_type": "daily_wellness_check",
+          "home_id.$": "$.home_id"
+        },
+        "workflow": "daily_wellness",
+        "resident_count.$": "$.residents.count",
+        "has_anomalies.$": "$.dailyReport.has_anomalies"
+      },
+      "End": true,
+      "Retry": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "IntervalSeconds": 1,
+          "MaxAttempts": 2,
+          "BackoffRate": 2.0
+        }
+      ]
+    },
+    "LogError": {
+      "Type": "Pass",
+      "Result": {
+        "status": "error",
+        "workflow": "daily_wellness"
+      },
+      "ResultPath": "$.result",
+      "End": true
+    }
+  }
+}

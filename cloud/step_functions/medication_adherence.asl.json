@@ -1,0 +1,246 @@
+{
+  "Comment": "AETHER Medication Adherence Workflow - Tracks medication events and escalates missed doses",
+  "StartAt": "DetectMedicationEvent",
+  "States": {
+    "DetectMedicationEvent": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-event-processor",
+      "Parameters": {
+        "action": "validate",
+        "event.$": "$.detail"
+      },
+      "ResultPath": "$.validation",
+      "Next": "ClassifyMedicationEvent",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "LogError",
+          "ResultPath": "$.error"
+        }
+      ]
+    },
+    "ClassifyMedicationEvent": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.detail.event_type",
+          "StringEquals": "medication_taken",
+          "Next": "RecordAdherence"
+        },
+        {
+          "Variable": "$.detail.event_type",
+          "StringEquals": "medication_missed",
+          "Next": "HandleMissedDose"
+        },
+        {
+          "Variable": "$.detail.event_type",
+          "StringEquals": "medication_late",
+          "Next": "HandleLateDose"
+        },
+        {
+          "Variable": "$.detail.event_type",
+          "StringEquals": "medication_confusion",
+          "Next": "HandleMedicationConfusion"
+        }
+      ],
+      "Default": "RecordAdherence"
+    },
+    "RecordAdherence": {
+      "Type": "Parallel",
+      "Branches": [
+        {
+          "StartAt": "StoreEvent",
+          "States": {
+            "StoreEvent": {
+              "Type": "Task",
+              "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-event-processor",
+              "Parameters": {
+                "action": "store",
+                "event.$": "$.detail"
+              },
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "UpdateAdherenceScore",
+          "States": {
+            "UpdateAdherenceScore": {
+              "Type": "Task",
+              "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-timeline-aggregator",
+              "Parameters": {
+                "action": "update_medication",
+                "event.$": "$.detail"
+              },
+              "End": true
+            }
+          }
+        }
+      ],
+      "ResultPath": "$.adherence",
+      "Next": "Complete"
+    },
+    "HandleMissedDose": {
+      "Type": "Parallel",
+      "Branches": [
+        {
+          "StartAt": "StoreMissedEvent",
+          "States": {
+            "StoreMissedEvent": {
+              "Type": "Task",
+              "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-event-processor",
+              "Parameters": {
+                "action": "store",
+                "event.$": "$.detail"
+              },
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "VoiceReminder",
+          "States": {
+            "VoiceReminder": {
+              "Type": "Task",
+              "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-escalation-handler",
+              "Parameters": {
+                "action": "voice_reminder",
+                "event.$": "$.detail",
+                "message": "It's time to take your medication. Please visit your medication station."
+              },
+              "End": true
+            }
+          }
+        }
+      ],
+      "ResultPath": "$.missed",
+      "Next": "WaitForMedicationResponse"
+    },
+    "WaitForMedicationResponse": {
+      "Type": "Wait",
+      "Seconds": 900,
+      "Next": "CheckIfTaken"
+    },
+    "CheckIfTaken": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-event-processor",
+      "Parameters": {
+        "action": "check_medication_status",
+        "event.$": "$.detail"
+      },
+      "ResultPath": "$.status",
+      "Next": "EvaluateMedicationStatus"
+    },
+    "EvaluateMedicationStatus": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.status.taken",
+          "BooleanEquals": true,
+          "Next": "Complete"
+        }
+      ],
+      "Default": "NotifyCaregiverMissedMed"
+    },
+    "NotifyCaregiverMissedMed": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-escalation-handler",
+      "Parameters": {
+        "action": "escalate",
+        "event.$": "$.detail",
+        "start_tier": "TIER_2",
+        "auto_advance": false,
+        "message": "Medication missed after reminder. Please check on your loved one."
+      },
+      "ResultPath": "$.escalation",
+      "Next": "Complete"
+    },
+    "HandleLateDose": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-event-processor",
+      "Parameters": {
+        "action": "store",
+        "event.$": "$.detail"
+      },
+      "ResultPath": "$.stored",
+      "Next": "Complete"
+    },
+    "HandleMedicationConfusion": {
+      "Type": "Parallel",
+      "Branches": [
+        {
+          "StartAt": "StoreConfusionEvent",
+          "States": {
+            "StoreConfusionEvent": {
+              "Type": "Task",
+              "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-event-processor",
+              "Parameters": {
+                "action": "store",
+                "event.$": "$.detail"
+              },
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "AlertCaregiverConfusion",
+          "States": {
+            "AlertCaregiverConfusion": {
+              "Type": "Task",
+              "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-escalation-handler",
+              "Parameters": {
+                "action": "escalate",
+                "event.$": "$.detail",
+                "start_tier": "TIER_2",
+                "auto_advance": true,
+                "message": "Medication confusion detected. Wrong medication may have been taken. Immediate attention required."
+              },
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "VoiceWarning",
+          "States": {
+            "VoiceWarning": {
+              "Type": "Task",
+              "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-escalation-handler",
+              "Parameters": {
+                "action": "voice_reminder",
+                "event.$": "$.detail",
+                "message": "Warning: This may not be the correct medication. Please wait for your caregiver to verify."
+              },
+              "End": true
+            }
+          }
+        }
+      ],
+      "ResultPath": "$.confusion",
+      "Next": "Complete"
+    },
+    "LogError": {
+      "Type": "Pass",
+      "Result": {
+        "status": "error"
+      },
+      "End": true
+    },
+    "Complete": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-timeline-aggregator",
+      "Parameters": {
+        "action": "update",
+        "event.$": "$.detail"
+      },
+      "End": true,
+      "Retry": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "IntervalSeconds": 1,
+          "MaxAttempts": 2,
+          "BackoffRate": 2.0
+        }
+      ]
+    }
+  }
+}

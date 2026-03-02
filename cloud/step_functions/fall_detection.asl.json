@@ -1,0 +1,258 @@
+{
+  "Comment": "AETHER Fall Detection Workflow - Orchestrates fall event processing, triage, and escalation",
+  "StartAt": "ValidateEvent",
+  "States": {
+    "ValidateEvent": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-event-processor",
+      "Parameters": {
+        "action": "validate",
+        "event.$": "$.detail"
+      },
+      "ResultPath": "$.validation",
+      "Next": "CheckValidation",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "LogError",
+          "ResultPath": "$.error"
+        }
+      ]
+    },
+    "CheckValidation": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.validation.valid",
+          "BooleanEquals": true,
+          "Next": "ParallelProcessing"
+        }
+      ],
+      "Default": "LogInvalidEvent"
+    },
+    "ParallelProcessing": {
+      "Type": "Parallel",
+      "Branches": [
+        {
+          "StartAt": "StoreEvent",
+          "States": {
+            "StoreEvent": {
+              "Type": "Task",
+              "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-event-processor",
+              "Parameters": {
+                "action": "store",
+                "event.$": "$.detail"
+              },
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "GenerateTriageCard",
+          "States": {
+            "GenerateTriageCard": {
+              "Type": "Task",
+              "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-event-processor",
+              "Parameters": {
+                "action": "triage",
+                "event.$": "$.detail"
+              },
+              "ResultPath": "$.triage",
+              "End": true,
+              "Retry": [
+                {
+                  "ErrorEquals": ["ServiceUnavailableException", "ThrottlingException"],
+                  "IntervalSeconds": 2,
+                  "MaxAttempts": 3,
+                  "BackoffRate": 2.0
+                }
+              ]
+            }
+          }
+        },
+        {
+          "StartAt": "StoreEvidencePacket",
+          "States": {
+            "StoreEvidencePacket": {
+              "Type": "Task",
+              "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-event-processor",
+              "Parameters": {
+                "action": "evidence",
+                "event.$": "$.detail"
+              },
+              "End": true
+            }
+          }
+        }
+      ],
+      "ResultPath": "$.processing",
+      "Next": "DetermineSeverity"
+    },
+    "DetermineSeverity": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.detail.severity",
+          "StringEquals": "CRITICAL",
+          "Next": "CriticalEscalation"
+        },
+        {
+          "Variable": "$.detail.severity",
+          "StringEquals": "HIGH",
+          "Next": "HighEscalation"
+        },
+        {
+          "Variable": "$.detail.severity",
+          "StringEquals": "MEDIUM",
+          "Next": "MediumEscalation"
+        }
+      ],
+      "Default": "LogAndComplete"
+    },
+    "CriticalEscalation": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-escalation-handler",
+      "Parameters": {
+        "action": "escalate",
+        "event.$": "$.detail",
+        "start_tier": "TIER_1",
+        "auto_advance": true
+      },
+      "ResultPath": "$.escalation",
+      "Next": "WaitForAcknowledgement"
+    },
+    "HighEscalation": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-escalation-handler",
+      "Parameters": {
+        "action": "escalate",
+        "event.$": "$.detail",
+        "start_tier": "TIER_1",
+        "auto_advance": true
+      },
+      "ResultPath": "$.escalation",
+      "Next": "WaitForAcknowledgement"
+    },
+    "MediumEscalation": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-escalation-handler",
+      "Parameters": {
+        "action": "escalate",
+        "event.$": "$.detail",
+        "start_tier": "TIER_1",
+        "auto_advance": false
+      },
+      "ResultPath": "$.escalation",
+      "Next": "LogAndComplete"
+    },
+    "WaitForAcknowledgement": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sqs:sendMessage.waitForTaskToken",
+      "Parameters": {
+        "QueueUrl": "${AcknowledgementQueueUrl}",
+        "MessageBody": {
+          "event_id.$": "$.detail.event_id",
+          "escalation.$": "$.escalation",
+          "taskToken.$": "$$.Task.Token"
+        }
+      },
+      "TimeoutSeconds": 300,
+      "ResultPath": "$.acknowledgement",
+      "Next": "CheckAcknowledgement",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.Timeout"],
+          "Next": "EscalateToNextTier",
+          "ResultPath": "$.timeout"
+        }
+      ]
+    },
+    "CheckAcknowledgement": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.acknowledgement.acknowledged",
+          "BooleanEquals": true,
+          "Next": "LogAcknowledged"
+        }
+      ],
+      "Default": "EscalateToNextTier"
+    },
+    "EscalateToNextTier": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-escalation-handler",
+      "Parameters": {
+        "action": "advance_tier",
+        "event.$": "$.detail",
+        "current_escalation.$": "$.escalation"
+      },
+      "ResultPath": "$.escalation",
+      "Next": "CheckMaxTier"
+    },
+    "CheckMaxTier": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.escalation.current_tier",
+          "StringEquals": "TIER_4",
+          "Next": "EmergencyServicesNotified"
+        }
+      ],
+      "Default": "WaitForAcknowledgement"
+    },
+    "EmergencyServicesNotified": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-escalation-handler",
+      "Parameters": {
+        "action": "emergency",
+        "event.$": "$.detail",
+        "escalation.$": "$.escalation"
+      },
+      "Next": "LogAndComplete"
+    },
+    "LogAcknowledged": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-escalation-handler",
+      "Parameters": {
+        "action": "log_acknowledged",
+        "event.$": "$.detail",
+        "acknowledgement.$": "$.acknowledgement"
+      },
+      "Next": "LogAndComplete"
+    },
+    "LogInvalidEvent": {
+      "Type": "Pass",
+      "Result": {
+        "status": "invalid_event",
+        "message": "Event failed validation"
+      },
+      "ResultPath": "$.result",
+      "Next": "LogAndComplete"
+    },
+    "LogError": {
+      "Type": "Pass",
+      "Result": {
+        "status": "error"
+      },
+      "ResultPath": "$.result",
+      "End": true
+    },
+    "LogAndComplete": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-timeline-aggregator",
+      "Parameters": {
+        "action": "update",
+        "event.$": "$.detail"
+      },
+      "End": true,
+      "Retry": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "IntervalSeconds": 1,
+          "MaxAttempts": 2,
+          "BackoffRate": 2.0
+        }
+      ]
+    }
+  }
+}

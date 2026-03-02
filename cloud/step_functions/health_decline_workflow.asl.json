@@ -1,0 +1,583 @@
+{
+  "Comment": "AETHER Health Decline Workflow - Monitors daily health metrics, detects trends, and escalates declining health patterns",
+  "StartAt": "FetchHistoricalMetrics",
+  "States": {
+    "FetchHistoricalMetrics": {
+      "Type": "Task",
+      "Comment": "Fetch the last 30 days of health metrics from DynamoDB",
+      "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-health-insights",
+      "Parameters": {
+        "action": "fetch_metrics",
+        "resident_id.$": "$.detail.resident_id",
+        "home_id.$": "$.detail.home_id",
+        "lookback_days": 30,
+        "metric_types": ["heart_rate", "blood_pressure", "spo2", "weight", "temperature", "sleep_quality", "mobility_score", "hydration"]
+      },
+      "ResultPath": "$.historicalMetrics",
+      "Next": "CalculateBaselineAndDrift",
+      "Retry": [
+        {
+          "ErrorEquals": ["Lambda.ServiceException", "Lambda.TooManyRequestsException"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "LogError",
+          "ResultPath": "$.error"
+        }
+      ]
+    },
+    "CalculateBaselineAndDrift": {
+      "Type": "Task",
+      "Comment": "Calculate baseline from historical data and measure drift from normal ranges",
+      "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-health-insights",
+      "Parameters": {
+        "action": "calculate_baseline",
+        "resident_id.$": "$.detail.resident_id",
+        "home_id.$": "$.detail.home_id",
+        "historical_metrics.$": "$.historicalMetrics",
+        "current_metrics.$": "$.detail.metrics"
+      },
+      "ResultPath": "$.baseline",
+      "Next": "ClassifyTrend",
+      "Retry": [
+        {
+          "ErrorEquals": ["Lambda.ServiceException", "Lambda.TooManyRequestsException"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "LogError",
+          "ResultPath": "$.error"
+        }
+      ]
+    },
+    "ClassifyTrend": {
+      "Type": "Task",
+      "Comment": "Classify health trend: improving, stable, concerning, declining, or critical",
+      "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-health-insights",
+      "Parameters": {
+        "action": "classify_trend",
+        "resident_id.$": "$.detail.resident_id",
+        "home_id.$": "$.detail.home_id",
+        "baseline.$": "$.baseline",
+        "current_metrics.$": "$.detail.metrics"
+      },
+      "ResultPath": "$.classification",
+      "Next": "EvaluateClassification",
+      "Retry": [
+        {
+          "ErrorEquals": ["Lambda.ServiceException", "Lambda.TooManyRequestsException"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "LogError",
+          "ResultPath": "$.error"
+        }
+      ]
+    },
+    "EvaluateClassification": {
+      "Type": "Choice",
+      "Comment": "Route based on health trend classification",
+      "Choices": [
+        {
+          "Variable": "$.classification.trend",
+          "StringEquals": "critical",
+          "Next": "HandleCritical"
+        },
+        {
+          "Variable": "$.classification.trend",
+          "StringEquals": "declining",
+          "Next": "HandleDeclining"
+        },
+        {
+          "Variable": "$.classification.trend",
+          "StringEquals": "concerning",
+          "Next": "HandleConcerning"
+        }
+      ],
+      "Default": "HandleStableOrImproving"
+    },
+    "HandleStableOrImproving": {
+      "Type": "Parallel",
+      "Comment": "Stable or improving - store metrics and complete",
+      "Branches": [
+        {
+          "StartAt": "StoreStableMetrics",
+          "States": {
+            "StoreStableMetrics": {
+              "Type": "Task",
+              "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-health-insights",
+              "Parameters": {
+                "action": "store_metrics",
+                "resident_id.$": "$.detail.resident_id",
+                "home_id.$": "$.detail.home_id",
+                "metrics.$": "$.detail.metrics",
+                "classification.$": "$.classification"
+              },
+              "End": true,
+              "Retry": [
+                {
+                  "ErrorEquals": ["States.ALL"],
+                  "IntervalSeconds": 1,
+                  "MaxAttempts": 2,
+                  "BackoffRate": 2.0
+                }
+              ]
+            }
+          }
+        },
+        {
+          "StartAt": "UpdateHealthProfile",
+          "States": {
+            "UpdateHealthProfile": {
+              "Type": "Task",
+              "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-health-insights",
+              "Parameters": {
+                "action": "update_profile",
+                "resident_id.$": "$.detail.resident_id",
+                "home_id.$": "$.detail.home_id",
+                "classification.$": "$.classification",
+                "baseline.$": "$.baseline"
+              },
+              "End": true,
+              "Retry": [
+                {
+                  "ErrorEquals": ["States.ALL"],
+                  "IntervalSeconds": 1,
+                  "MaxAttempts": 2,
+                  "BackoffRate": 2.0
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "ResultPath": "$.stableProcessing",
+      "Next": "UpdateDashboardMetrics"
+    },
+    "HandleConcerning": {
+      "Type": "Parallel",
+      "Comment": "Concerning trend - generate report and notify caregiver",
+      "Branches": [
+        {
+          "StartAt": "StoreConcerningMetrics",
+          "States": {
+            "StoreConcerningMetrics": {
+              "Type": "Task",
+              "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-health-insights",
+              "Parameters": {
+                "action": "store_metrics",
+                "resident_id.$": "$.detail.resident_id",
+                "home_id.$": "$.detail.home_id",
+                "metrics.$": "$.detail.metrics",
+                "classification.$": "$.classification"
+              },
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "GenerateConcerningReport",
+          "States": {
+            "GenerateConcerningReport": {
+              "Type": "Task",
+              "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-doc-generator",
+              "Parameters": {
+                "action": "generate_health_report",
+                "resident_id.$": "$.detail.resident_id",
+                "home_id.$": "$.detail.home_id",
+                "report_type": "concerning_trend",
+                "classification.$": "$.classification",
+                "baseline.$": "$.baseline",
+                "historical_metrics.$": "$.historicalMetrics"
+              },
+              "ResultPath": "$.healthReport",
+              "End": true,
+              "Retry": [
+                {
+                  "ErrorEquals": ["ServiceUnavailableException", "ThrottlingException"],
+                  "IntervalSeconds": 2,
+                  "MaxAttempts": 3,
+                  "BackoffRate": 2.0
+                }
+              ]
+            }
+          }
+        },
+        {
+          "StartAt": "NotifyCaregiverConcerning",
+          "States": {
+            "NotifyCaregiverConcerning": {
+              "Type": "Task",
+              "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-escalation-handler",
+              "Parameters": {
+                "action": "escalate",
+                "event.$": "$.detail",
+                "tier": 2,
+                "auto_advance": false,
+                "message": "Health trend alert: Concerning patterns detected in recent metrics. Please review the health report in the AETHER app."
+              },
+              "End": true
+            }
+          }
+        }
+      ],
+      "ResultPath": "$.concerningProcessing",
+      "Next": "StoreHealthProfileUpdate",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "LogError",
+          "ResultPath": "$.error"
+        }
+      ]
+    },
+    "HandleDeclining": {
+      "Type": "Parallel",
+      "Comment": "Declining trend - generate report, notify caregiver + doctor, create care plan",
+      "Branches": [
+        {
+          "StartAt": "StoreDecliningMetrics",
+          "States": {
+            "StoreDecliningMetrics": {
+              "Type": "Task",
+              "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-health-insights",
+              "Parameters": {
+                "action": "store_metrics",
+                "resident_id.$": "$.detail.resident_id",
+                "home_id.$": "$.detail.home_id",
+                "metrics.$": "$.detail.metrics",
+                "classification.$": "$.classification"
+              },
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "GenerateDecliningReport",
+          "States": {
+            "GenerateDecliningReport": {
+              "Type": "Task",
+              "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-doc-generator",
+              "Parameters": {
+                "action": "generate_health_report",
+                "resident_id.$": "$.detail.resident_id",
+                "home_id.$": "$.detail.home_id",
+                "report_type": "declining_trend",
+                "classification.$": "$.classification",
+                "baseline.$": "$.baseline",
+                "historical_metrics.$": "$.historicalMetrics",
+                "include_recommendations": true
+              },
+              "ResultPath": "$.healthReport",
+              "End": true,
+              "Retry": [
+                {
+                  "ErrorEquals": ["ServiceUnavailableException", "ThrottlingException"],
+                  "IntervalSeconds": 2,
+                  "MaxAttempts": 3,
+                  "BackoffRate": 2.0
+                }
+              ]
+            }
+          }
+        },
+        {
+          "StartAt": "NotifyCaregiverDeclining",
+          "States": {
+            "NotifyCaregiverDeclining": {
+              "Type": "Task",
+              "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-escalation-handler",
+              "Parameters": {
+                "action": "escalate",
+                "event.$": "$.detail",
+                "tier": 2,
+                "auto_advance": true,
+                "message": "Health decline alert: Multiple metrics showing declining trend over recent days. Review required. Doctor has been notified."
+              },
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "NotifyDoctorDeclining",
+          "States": {
+            "NotifyDoctorDeclining": {
+              "Type": "Task",
+              "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-escalation-handler",
+              "Parameters": {
+                "action": "escalate",
+                "event.$": "$.detail",
+                "tier": 3,
+                "auto_advance": false,
+                "message": "AETHER Health Decline Report: Patient showing declining health metrics across multiple indicators. Care plan review recommended."
+              },
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "CreateCarePlan",
+          "States": {
+            "CreateCarePlan": {
+              "Type": "Task",
+              "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-doc-generator",
+              "Parameters": {
+                "action": "generate_care_plan",
+                "resident_id.$": "$.detail.resident_id",
+                "home_id.$": "$.detail.home_id",
+                "plan_type": "health_decline",
+                "classification.$": "$.classification",
+                "baseline.$": "$.baseline"
+              },
+              "ResultPath": "$.carePlan",
+              "End": true,
+              "Retry": [
+                {
+                  "ErrorEquals": ["ServiceUnavailableException", "ThrottlingException"],
+                  "IntervalSeconds": 2,
+                  "MaxAttempts": 3,
+                  "BackoffRate": 2.0
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "ResultPath": "$.decliningProcessing",
+      "Next": "StoreHealthProfileUpdate",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "LogError",
+          "ResultPath": "$.error"
+        }
+      ]
+    },
+    "HandleCritical": {
+      "Type": "Parallel",
+      "Comment": "Critical trend - urgent report, notify all stakeholders, create emergency care plan",
+      "Branches": [
+        {
+          "StartAt": "StoreCriticalMetrics",
+          "States": {
+            "StoreCriticalMetrics": {
+              "Type": "Task",
+              "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-health-insights",
+              "Parameters": {
+                "action": "store_metrics",
+                "resident_id.$": "$.detail.resident_id",
+                "home_id.$": "$.detail.home_id",
+                "metrics.$": "$.detail.metrics",
+                "classification.$": "$.classification",
+                "urgent": true
+              },
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "GenerateUrgentReport",
+          "States": {
+            "GenerateUrgentReport": {
+              "Type": "Task",
+              "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-doc-generator",
+              "Parameters": {
+                "action": "generate_health_report",
+                "resident_id.$": "$.detail.resident_id",
+                "home_id.$": "$.detail.home_id",
+                "report_type": "critical_trend",
+                "classification.$": "$.classification",
+                "baseline.$": "$.baseline",
+                "historical_metrics.$": "$.historicalMetrics",
+                "include_recommendations": true,
+                "urgent": true
+              },
+              "ResultPath": "$.healthReport",
+              "End": true,
+              "Retry": [
+                {
+                  "ErrorEquals": ["ServiceUnavailableException", "ThrottlingException"],
+                  "IntervalSeconds": 2,
+                  "MaxAttempts": 3,
+                  "BackoffRate": 2.0
+                }
+              ]
+            }
+          }
+        },
+        {
+          "StartAt": "NotifyAllCritical",
+          "States": {
+            "NotifyAllCritical": {
+              "Type": "Task",
+              "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-escalation-handler",
+              "Parameters": {
+                "action": "escalate",
+                "event.$": "$.detail",
+                "tier": 3,
+                "auto_advance": true,
+                "message": "CRITICAL HEALTH ALERT: Patient showing critical health decline across multiple metrics. Urgent medical review required."
+              },
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "NotifyFamilyCritical",
+          "States": {
+            "NotifyFamilyCritical": {
+              "Type": "Task",
+              "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-family-portal",
+              "Parameters": {
+                "action": "send_alert",
+                "resident_id.$": "$.detail.resident_id",
+                "home_id.$": "$.detail.home_id",
+                "alert_type": "critical_health_decline",
+                "message": "Critical health alert for your loved one. Multiple health indicators are showing concerning changes. The care team has been notified."
+              },
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "CreateEmergencyCarePlan",
+          "States": {
+            "CreateEmergencyCarePlan": {
+              "Type": "Task",
+              "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-doc-generator",
+              "Parameters": {
+                "action": "generate_care_plan",
+                "resident_id.$": "$.detail.resident_id",
+                "home_id.$": "$.detail.home_id",
+                "plan_type": "emergency_health_decline",
+                "classification.$": "$.classification",
+                "baseline.$": "$.baseline",
+                "urgent": true
+              },
+              "ResultPath": "$.emergencyCarePlan",
+              "End": true,
+              "Retry": [
+                {
+                  "ErrorEquals": ["ServiceUnavailableException", "ThrottlingException"],
+                  "IntervalSeconds": 2,
+                  "MaxAttempts": 3,
+                  "BackoffRate": 2.0
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "ResultPath": "$.criticalProcessing",
+      "Next": "StoreHealthProfileUpdate",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "LogError",
+          "ResultPath": "$.error"
+        }
+      ]
+    },
+    "StoreHealthProfileUpdate": {
+      "Type": "Task",
+      "Comment": "Persist the updated health profile with latest classification",
+      "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-health-insights",
+      "Parameters": {
+        "action": "update_profile",
+        "resident_id.$": "$.detail.resident_id",
+        "home_id.$": "$.detail.home_id",
+        "classification.$": "$.classification",
+        "baseline.$": "$.baseline"
+      },
+      "ResultPath": "$.profileUpdate",
+      "Next": "UpdateDashboardMetrics",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "IntervalSeconds": 1,
+          "MaxAttempts": 2,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "UpdateDashboardMetrics",
+          "ResultPath": "$.profileError",
+          "Comment": "Continue to dashboard update even if profile store fails"
+        }
+      ]
+    },
+    "UpdateDashboardMetrics": {
+      "Type": "Task",
+      "Comment": "Update the dashboard with latest health metrics and trend data",
+      "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-analytics-processor",
+      "Parameters": {
+        "action": "update_dashboard",
+        "resident_id.$": "$.detail.resident_id",
+        "home_id.$": "$.detail.home_id",
+        "classification.$": "$.classification",
+        "metrics.$": "$.detail.metrics"
+      },
+      "ResultPath": "$.dashboardUpdate",
+      "Next": "LogAndComplete",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "IntervalSeconds": 1,
+          "MaxAttempts": 2,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "LogAndComplete",
+          "ResultPath": "$.dashboardError"
+        }
+      ]
+    },
+    "LogError": {
+      "Type": "Pass",
+      "Result": {
+        "status": "error",
+        "workflow": "health_decline"
+      },
+      "ResultPath": "$.result",
+      "End": true
+    },
+    "LogAndComplete": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aether-timeline-aggregator",
+      "Parameters": {
+        "action": "update",
+        "event.$": "$.detail",
+        "workflow": "health_decline"
+      },
+      "End": true,
+      "Retry": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "IntervalSeconds": 1,
+          "MaxAttempts": 2,
+          "BackoffRate": 2.0
+        }
+      ]
+    }
+  }
+}
