@@ -1,0 +1,132 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+@layer base {
+  * {
+    @apply border-gray-200;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-white rounded-xl shadow-sm border border-gray-100 p-6;
+  }
+  .card-hover {
+    @apply card hover:shadow-md transition-shadow duration-200;
+  }
+  .stat-card {
+    @apply card flex flex-col gap-2;
+  }
+  .badge {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+  }
+  .badge-critical {
+    @apply badge bg-red-100 text-red-800;
+  }
+  .badge-high {
+    @apply badge bg-orange-100 text-orange-800;
+  }
+  .badge-medium {
+    @apply badge bg-yellow-100 text-yellow-800;
+  }
+  .badge-low {
+    @apply badge bg-green-100 text-green-800;
+  }
+  .badge-info {
+    @apply badge bg-gray-100 text-gray-800;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center px-4 py-2 rounded-lg font-medium text-sm transition-all duration-150 focus:outline-none focus:ring-2 focus:ring-offset-2;
+  }
+  .btn-primary {
+    @apply btn bg-aether-600 text-white hover:bg-aether-700 focus:ring-aether-500;
+  }
+  .btn-secondary {
+    @apply btn bg-white text-gray-700 border border-gray-300 hover:bg-gray-50 focus:ring-aether-500;
+  }
+  .btn-danger {
+    @apply btn bg-red-600 text-white hover:bg-red-700 focus:ring-red-500;
+  }
+  .input {
+    @apply block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm placeholder-gray-400 focus:border-aether-500 focus:ring-1 focus:ring-aether-500 focus:outline-none;
+  }
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Pulse animation for active alerts */
+@keyframes alertPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+  50% { box-shadow: 0 0 0 8px rgba(239, 68, 68, 0); }
+}
+.alert-pulse {
+  animation: alertPulse 2s infinite;
+}
+
+/* Smooth page transitions */
+@keyframes slideInRight {
+  from { transform: translateX(8px); opacity: 0; }
+  to   { transform: translateX(0);  opacity: 1; }
+}
+.animate-slide-in-right {
+  animation: slideInRight 0.35s ease-out;
+}
+
+/* Gradient accent bar for section headers */
+.section-accent {
+  position: relative;
+}
+.section-accent::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  border-radius: 9999px 9999px 0 0;
+  background: linear-gradient(90deg, #338cff, #6366f1, #a855f7);
+}
+
+/* Glassy card variant */
+.glass-card {
+  @apply bg-white/70 backdrop-blur-lg rounded-2xl shadow-sm border border-white/40;
+}
+
+/* Status dot pulse */
+@keyframes dotPulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.4); opacity: 0.6; }
+}
+.dot-pulse {
+  animation: dotPulse 2s ease-in-out infinite;
+}
+
+/* Safe area for iOS notch / home indicator */
+.safe-area-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* Touch-friendly tap highlights */
+@media (hover: none) {
+  button, a {
+    -webkit-tap-highlight-color: rgba(51, 140, 255, 0.1);
+  }
+}
