@@ -1,0 +1,19 @@
+{
+  "name": "AETHER CareOps Platform",
+  "short_name": "AETHER",
+  "description": "Adaptive Elderly Tracking & Home Emergency Response — AI-powered elder care monitoring platform",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f8fafc",
+  "theme_color": "#1e293b",
+  "orientation": "any",
+  "categories": ["health", "medical"],
+  "icons": [
+    {
+      "src": "/vite.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
