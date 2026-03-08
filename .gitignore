@@ -109,4 +109,5 @@ data/synthetic/
 VK_Inputs/
 .DS_Store
 .env
-create_git_history.sh
+create_git_history.sh.vite/
+dashboard/tsconfig.tsbuildinfo
