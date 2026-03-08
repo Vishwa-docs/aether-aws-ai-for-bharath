@@ -35,7 +35,8 @@ load_env()
 try:
     from fastapi import FastAPI, HTTPException, Request
     from fastapi.middleware.cors import CORSMiddleware
-    from fastapi.responses import JSONResponse
+    from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
+    from fastapi.staticfiles import StaticFiles
     import uvicorn
 except ImportError:
     print("Installing required packages...")
@@ -43,7 +44,8 @@ except ImportError:
     subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'fastapi', 'uvicorn[standard]', 'boto3'])
     from fastapi import FastAPI, HTTPException, Request
     from fastapi.middleware.cors import CORSMiddleware
-    from fastapi.responses import JSONResponse
+    from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
+    from fastapi.staticfiles import StaticFiles
     import uvicorn
 
 import boto3
@@ -1045,10 +1047,39 @@ async def simulate_event(request: Request):
 
 # ─── Main ──────────────────────────────────────────────────────────────
 
+# Serve React dashboard static files (production)
+STATIC_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'dashboard', 'dist')
+if os.path.exists(STATIC_DIR):
+    # Serve static assets (JS, CSS, images)
+    app.mount("/assets", StaticFiles(directory=os.path.join(STATIC_DIR, "assets")), name="static-assets")
+
+    # Serve other static files (manifest, icons, etc.)
+    @app.get("/manifest.json")
+    async def serve_manifest():
+        fpath = os.path.join(STATIC_DIR, "manifest.json")
+        if os.path.exists(fpath):
+            return FileResponse(fpath, media_type="application/json")
+        raise HTTPException(status_code=404)
+
+    # SPA catch-all: serve index.html for any non-API route
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str):
+        # Don't catch API routes
+        if full_path.startswith("api/") or full_path == "docs" or full_path == "openapi.json":
+            raise HTTPException(status_code=404)
+        index_path = os.path.join(STATIC_DIR, "index.html")
+        if os.path.exists(index_path):
+            return FileResponse(index_path, media_type="text/html")
+        raise HTTPException(status_code=404)
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8001))
     print(f"\n🚀 AETHER CareOps API starting on port {port}")
     print(f"   Region: {REGION}")
     print(f"   Bedrock Model: {BEDROCK_MODEL_ID}")
+    if os.path.exists(STATIC_DIR):
+        print(f"   Dashboard: Serving from {STATIC_DIR}")
+    else:
+        print(f"   Dashboard: Not built (run 'cd dashboard && npm run build')")
     print(f"   Docs: http://localhost:{port}/docs\n")
     uvicorn.run(app, host="0.0.0.0", port=port)

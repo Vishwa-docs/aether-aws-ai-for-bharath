@@ -1,0 +1,17 @@
+node_modules/
+.vite/
+__pycache__/
+*.pyc
+.env
+.git/
+.kiro/
+VK_Inputs/
+edge/
+infrastructure/
+cloud/
+demo/
+scripts/
+*.egg-info/
+.DS_Store
+dashboard/node_modules/
+dashboard/.vite/
