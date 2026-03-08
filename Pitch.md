@@ -1,96 +1,94 @@
-# AETHER — Pitch Guide
+# AETHER — The Story
 
-## What is AETHER?
+## Meet Kamala
 
-AETHER stands for Autonomous Elderly ecosystem for Total Health, Engagement & Response. It is an end-to-end care operating system that monitors elderly residents through ambient sensors, processes data locally on edge devices for privacy, and uses Amazon Bedrock's generative AI for clinical reasoning, document generation, and care navigation. The platform coordinates response across families, nurses, doctors, and emergency services — all from a single unified dashboard.
+Kamala Devi is 78 years old. She lives alone in a small apartment in Bangalore. Her daughter Priya lives two hours away and worries constantly. Kamala takes seven medications, has mild diabetes, and fell in the bathroom three months ago. She never told Priya about the fall.
 
-The core insight behind AETHER is simple: elderly care is not a single problem, it is twelve interconnected problems — falls, medication chaos, caregiver burnout, silent health decline, social isolation, alert fatigue, and more. AETHER addresses all twelve with a combination of multi-sensor fusion at the edge and agentic AI in the cloud. Nothing is mocked. Every AI feature hits real AWS services.
+This is not an unusual story. India will have **194 million elderly citizens by 2030**. Globally, an older adult is treated in the ER for a fall **every 11 seconds**. Over **125,000 people die each year** because they did not take their medications correctly. And the cruel irony of existing monitoring solutions — cameras in the bedroom, pendant alarms that go unanswered, noisy clinical systems drowning nurses in false alerts — is that they fail the very people they are trying to protect.
 
----
-
-## The Problem We Solve
-
-Every 11 seconds, an older adult is treated in the ER for a fall. Over 125,000 people die annually from medication non-adherence alone. More than 150 million elderly people worldwide live independently, facing cascading health risks that current monitoring solutions simply cannot handle.
-
-Existing solutions fall into three broken categories. Camera-based systems are invasive and strip dignity. Single-purpose devices like pendant alarms are fragmented — they do not talk to each other or learn from patterns. And clinical monitoring systems are so noisy with false alarms that families stop trusting them within weeks. AETHER was built to change all of that.
+AETHER was built because elderly care is not one problem. It is twelve interconnected problems — falls, medication chaos, silent health decline, caregiver burnout, social isolation, alert fatigue — and they demand a single, intelligent system that ties everything together.
 
 ---
 
-## How It Works — The Architecture
+## A Day with AETHER
 
-AETHER runs on a three-tier architecture. At the edge, a Raspberry Pi 5 hub collects data from 10+ sensors (accelerometer, pressure mat, acoustic, PIR motion, door sensors, temperature, gas, pillbox) and runs local AI models for fall detection and acoustic event classification. No raw audio or video ever leaves the home — only structured event labels and extracted features are sent to the cloud.
+Let us walk through what one day looks like when Kamala's home is equipped with AETHER.
 
-In the cloud, events flow through AWS IoT Core into DynamoDB, where Lambda functions and Step Functions process them. Amazon Bedrock (Nova Lite model) powers five AI endpoints: care navigation, polypharmacy checking, clinical document generation, health insights, and voice companion responses. The entire infrastructure is defined as code using CDK with four stacks.
+### 6:30 AM — Kamala Wakes Up
 
-On the client side, a React + TypeScript dashboard serves four persona-based views (Elder, Caregiver, Doctor, Operations), each showing role-appropriate data and features. The dashboard is also a PWA that works on mobile devices with a bottom tab navigation bar.
+A pressure mat under Kamala's mattress detects she has risen. A PIR motion sensor in the hallway confirms she is moving toward the kitchen. A door sensor logs that the bathroom door opened and closed. None of these are cameras. No video is recorded. No audio is streamed. An edge hub — a **Raspberry Pi 5** sitting quietly on a shelf — processes all this sensor data locally using on-device ML models. Only structured event labels are sent to the cloud through **AWS IoT Core**.
 
----
+This is AETHER's foundational promise: **privacy-first ambient monitoring**. The sensors know *what* is happening without knowing *what it looks like*.
 
-## How to Demo — Step by Step
+### 7:15 AM — Medications
 
-Open the live deployment URL in your browser. You will see the AETHER login page with four persona cards. Each persona reveals a different view of the platform. The password for all accounts is **demo123**. Simply click any persona card to log in instantly.
+Kamala opens her smart pillbox. An NFC sensor logs that she took her morning dose — metformin, amlodipine, and atorvastatin. The event is written to **Amazon DynamoDB** and a **Step Function** (medication adherence workflow) checks it against her prescribed schedule. All seven medications are accounted for.
 
-### Start with the Caregiver View
+But what if she had missed a dose? The Step Function would trigger a gentle reminder on her tablet first. If no response after 15 minutes, it escalates — Priya gets a push notification. After 30 minutes, the assigned caregiver is alerted. This four-tier escalation is fully automated through **AWS Lambda** and **Step Functions**, and it means nobody falls through the cracks.
 
-Click the **Caregiver** card (Priya Nair, the green one). This is the most feature-rich view. After logging in, you will land on the main dashboard showing all residents with status cards, risk scores, and the escalation funnel. Notice the Command Center strip at the top showing real-time system status.
+### 9:00 AM — The Caregiver's Morning
 
-Now open the sidebar and navigate to **Residents**. Click on any resident card to expand it. You will see their full health profile, medications, recent events, and sensor data. Click the sparkle icon labeled **AI Health Insights** — this calls Amazon Bedrock in real time and generates a clinical analysis of the resident's health patterns. Wait a few seconds for the AI response to appear.
+Two hours away, Priya opens AETHER on her phone. She logs in as a **Caregiver** and sees the dashboard: three residents she oversees (Kamala plus two neighbors in her care circle), each with a risk score, recent events, and status indicators. She taps on Kamala's card and expands it to see her full health profile — vitals, medications, last 24 hours of activity, sensor data.
 
-### Try the AI Features
+She notices Kamala's sleep quality has been declining over the past week. She clicks the sparkle icon — **AI Health Insights** — and within seconds, **Amazon Bedrock** (running the Nova Lite model) analyzes Kamala's sensor data and generates a clinical summary: *"Sleep duration has decreased from 7.2 to 5.1 hours over the past 8 days. Nighttime bathroom visits have increased from 1 to 3. Possible UTI or medication side-effect. Recommend clinical review."*
 
-Navigate to **Care Navigation** in the sidebar. This is a chat interface powered by Amazon Bedrock. Type a question like "What diet should Kamala follow for her diabetes?" or "Is it safe for Kamala to take aspirin with her current medications?" The AI responds with patient-aware, culturally appropriate guidance using knowledge of the resident's health profile. Every response includes a medical disclaimer.
+This is not a canned response. Bedrock is reading Kamala's actual event data from DynamoDB and reasoning over it in real time.
 
-Next, go to **Prescriptions**. You will see the medication lists for each resident. Click the **Check Interactions** button on any resident. Bedrock will analyze all their medications for drug-drug interactions, food-drug warnings, and suggest generic alternatives from the Indian government's PMBJP program with cost savings.
+### 10:00 AM — A Question for the AI
 
-### Generate Clinical Documents
+Priya wants advice. She navigates to **Care Navigation** — a chat interface — and types: *"Kamala has been waking up three times at night. Could her amlodipine be causing this?"*
 
-If you log in as the **Doctor** persona (Dr. Rajesh Menon, the blue card), navigate to **Clinical Docs**. Select a resident, choose a document type (SOAP Note, Discharge Summary, Care Plan, or Incident Report), and click **Generate**. Amazon Bedrock will create a comprehensive clinical document in 3 to 5 seconds, complete with subjective findings, objective data, assessment, and plan — all derived from the resident's actual event and sensor data.
+**Amazon Bedrock** responds with patient-aware, contextual guidance. It references Kamala's medication list, notes that amlodipine can cause nocturia as a side effect, suggests discussing a dosage adjustment with her doctor, and includes a medical disclaimer. The AI is not a search engine pasting generic answers — it has Kamala's full context.
 
-### Simulate Live Events
+### 11:30 AM — Checking for Drug Interactions
 
-Look for the lightning bolt icon in the bottom-left of the sidebar — this opens the **Demo Panel**. From here, you can trigger live scenarios: simulate a fall, medication miss, vital alert, or choking event. After triggering an event, navigate to the **Timeline** or **Alerts** page to watch it appear in real-time. The event flows through DynamoDB and appears on the dashboard within seconds.
+Priya remembers that Kamala recently started taking an over-the-counter antacid. She goes to **Prescriptions** and clicks **Check Interactions**. Bedrock runs a **polypharmacy analysis** across all seven medications plus the new antacid. It flags that antacids can reduce absorption of amlodipine if taken together, recommends spacing them two hours apart, and additionally surfaces **generic alternatives** from the Indian government's PMBJP (Pradhan Mantri Bhartiya Janaushadhi Pariyojana) program — showing that Kamala could save Rs. 340 per month by switching to Jan Aushadhi branded equivalents.
 
-### Explore Fleet Operations
+### 2:00 PM — The Doctor's View
 
-Log in as the **Ops / B2B** persona (Anand Kulkarni, the amber card). Navigate to **Fleet Ops** to see the fleet management view — edge gateway status, site health metrics, caregiver workload distribution, and sensor health across all monitored homes. This is the view a clinic operations manager would use to oversee 50 to 100 homes at once.
+Dr. Rajesh Menon logs in as a **Doctor**. He selects Kamala and navigates to **Clinical Docs**. He chooses "SOAP Note" and clicks **Generate**. In three seconds, **Amazon Bedrock** produces a full clinical document — Subjective complaints derived from recent events, Objective data from sensor readings, Assessment based on pattern analysis, and a recommended Plan. All of it sourced from Kamala's real data in DynamoDB. No typing, no templates — just AI-generated clinical documentation grounded in actual patient data.
 
-Also check the **Family Portal** (available under the Ops view) to see what a remote family caregiver sees — a simplified status dashboard with medication adherence, recent events, and the ability to communicate.
+### 4:45 PM — Something Goes Wrong
 
-### Check the Analytics
+Kamala stumbles in the kitchen. The accelerometer on her wearable detects a sudden impact followed by stillness. The edge hub's **TensorFlow Lite model** classifies this as a probable fall with 94% confidence. It immediately sends a structured event to the cloud.
 
-Navigate to **Analytics** from any role. This page shows deep operational metrics: event distribution by type and severity, response time trends, false positive rates, sensor health, and AI model confidence tracking. Toggle between 7-day, 14-day, 30-day, and 90-day views to see how trends evolve.
+A **Step Function** (fall detection workflow) kicks in. DynamoDB records the event. A **Lambda function** triggers the escalation chain — Kamala's tablet sounds an alert asking if she is okay. She does not respond within 60 seconds. Priya's phone rings. The caregiver's dashboard turns red. If no one acknowledges within 5 minutes, emergency services are contacted automatically.
 
----
+On the dashboard, the fall appears instantly in the **Timeline** and **Alerts** views. The entire response — from impact to first human notification — took 8 seconds.
 
-## The AI — What Amazon Bedrock Does
+### 7:00 PM — The Voice Companion
 
-AETHER uses Amazon Bedrock with the Nova Lite model for five distinct AI capabilities. First, the Care Navigation Agent answers health questions in natural language with patient context, grounded in medical knowledge and filtered through safety guardrails. Second, the Polypharmacy Checker analyzes medication lists for drug-drug interactions, food-drug warnings, and suggests cheaper generic alternatives. Third, the Clinical Document Generator creates SOAP notes, discharge summaries, and care plans from real patient data. Fourth, the Health Insights Engine analyzes patterns across sensor data to detect drift — gradual health decline that is invisible to periodic checkups but clear in continuous monitoring. Fifth, the Voice Companion generates warm, contextual responses for elderly residents in their preferred language using Amazon Polly for text-to-speech.
+It is evening. Kamala is fine — the fall was minor, just a stumble. But she is feeling lonely. She talks to AETHER's **Voice Companion** on her tablet. The AI responds warmly, asks about her day, reminds her to drink water, and gently asks about her mood. Behind the scenes, **Amazon Bedrock** generates the conversational response and **Amazon Polly** converts it to natural speech in her preferred language. The system also runs quiet **sentiment analysis** on her responses, tracking mood trends over time.
 
-Beyond Bedrock, AETHER uses six Step Functions for workflow orchestration (medication adherence, fall detection, prescription processing, choking triage, daily wellness, and health decline prediction), eight Lambda functions for event processing, and DynamoDB with five tables for the complete data model.
+### 9:00 PM — Operations at Scale
 
----
-
-## AWS Services Used
-
-The platform runs on over 10 AWS services. Amazon Bedrock provides all generative AI capabilities. DynamoDB stores events, timeline entries, resident profiles, consent records, and clinic operations data across five tables. Lambda handles event processing, analytics, care navigation, document generation, and polypharmacy analysis. Step Functions orchestrate complex multi-step workflows. IoT Core handles edge device communication. Cognito manages authentication with four role-based groups. S3 stores clinical documents. CloudWatch provides monitoring and logging. Polly generates speech for the voice companion. CDK defines the entire infrastructure as code across four stacks. ECS Fargate hosts the production deployment.
+Meanwhile, at the clinic that manages sensor deployments across 50 homes, Anand from the Ops team logs into the **Operations** dashboard. He sees a fleet management view — every edge gateway's connection status, battery levels, sensor health, firmware versions, and caregiver workload distribution. One hub in another home has been offline for 3 hours. He flags it for a field visit. This is the B2B side of AETHER — the tooling that makes it possible to scale ambient care from 3 homes to 300.
 
 ---
 
-## Technical Highlights
+## What Powers All of This
 
-The codebase is approximately 40,000 lines of production-quality code. The React dashboard has zero TypeScript compilation errors. The data pipeline is fully live — DynamoDB to FastAPI to React with no mocks in demo mode. The edge system is designed for offline-first operation with a Raspberry Pi 5 and ESP32 sensor mesh. The CDK infrastructure is fully reproducible. The dashboard is a PWA installable on any mobile device with responsive design and safe area support for notched phones.
+Every feature described above runs on real AWS services. Nothing is mocked.
+
+- **Amazon Bedrock** (Nova Lite) powers all five AI capabilities — care navigation, polypharmacy checks, clinical docs, health insights, and voice companion
+- **DynamoDB** stores everything — events, timelines, resident profiles, consent, and clinic operations across five tables
+- **Lambda** (8 functions) handles event processing, analytics, and AI orchestration
+- **Step Functions** (6 workflows) automate medication adherence, fall response, prescription processing, choking triage, daily wellness checks, and health decline prediction
+- **IoT Core** connects edge devices to the cloud securely
+- **Cognito** manages authentication with four role-based groups (Elder, Caregiver, Doctor, Ops)
+- **Polly** provides text-to-speech for the voice companion
+- **S3** stores clinical documents
+- **CDK** defines the entire infrastructure as code (4 stacks)
+- **ECS Fargate** hosts the live production deployment
+- **CloudWatch** provides monitoring and logging
+
+The codebase is approximately **40,000 lines** of production-quality code. The React dashboard compiles with **zero TypeScript errors**. The data pipeline is fully live — DynamoDB to FastAPI to React — with no mocked responses in demo mode.
 
 ---
 
-## Market Opportunity
+## Why AETHER is Different
 
-The global elderly care market is projected to reach 1.32 trillion dollars by 2030. Remote patient monitoring alone will be a 175 billion dollar market by 2028. India's elderly population will reach 194 million by 2030. The average cost of a single fall hospitalization is 35,000 dollars in the US, and medication non-adherence costs the US healthcare system over 300 billion dollars annually. AETHER's approach of early detection through continuous ambient monitoring can reduce cost-per-incident by an estimated 60 percent through automated coordination and faster response.
-
----
-
-## Why AETHER Wins
-
-Unlike competitors, AETHER is privacy-first — no cameras, no raw audio leaves the home. It uses multi-sensor fusion instead of relying on a single device. It has generative AI clinical reasoning that no competitor offers. It provides four distinct persona dashboards instead of a one-size-fits-all interface. It operates in a hybrid edge-plus-cloud architecture that works offline for safety-critical features. And it is built on an open, extensible architecture rather than a proprietary black box.
+AETHER does not put cameras in bedrooms. It does not rely on a single wearable that elderly users forget to charge. It does not flood caregivers with false alarms. Instead, it fuses data from ten sensor types at the edge, processes it locally for privacy, sends only meaningful events to the cloud, and lets generative AI do the clinical reasoning that no rule-based system can match. It gives four different people — the elder, the family caregiver, the doctor, and the operations manager — four different views of the same patient, each designed for their workflow. And it works offline for safety-critical features because an internet outage should never mean a fall goes undetected.
 
 ---
 
