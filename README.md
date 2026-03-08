@@ -1,12 +1,14 @@
 # AETHER CareOps Platform
 
-> **Adaptive Elderly Tracking & Home Emergency Response**
-> AI-powered elder care monitoring platform built on AWS
+> **Autonomous Elderly ecosystem for Total Health, Engagement & Response**
+> AI-powered elder care operating system built on AWS
 
 [![AWS](https://img.shields.io/badge/AWS-Powered-FF9900?logo=amazon-aws)](https://aws.amazon.com)
 [![React](https://img.shields.io/badge/React-18-61DAFB?logo=react)](https://react.dev)
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python)](https://python.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.5-3178C6?logo=typescript)](https://typescriptlang.org)
+
+**Live Demo:** http://65.1.180.56:8080
 
 ---
 
@@ -14,7 +16,7 @@
 
 AETHER is an end-to-end elderly care operating system that combines **ambient sensing**, **edge AI**, and **agentic GenAI** (Amazon Bedrock) to prevent health emergencies, detect them instantly, and coordinate real-world response across caregivers, medical staff, and emergency services.
 
-The platform provides 4 persona-based dashboards (Elder, Caregiver, Doctor, Operations) with 15+ AI-powered features, all running on AWS infrastructure.
+The platform provides 4 persona-based dashboards (Elder, Caregiver, Doctor, Operations) with 15+ AI-powered features, all running on AWS infrastructure. All AI features hit real AWS services — nothing is mocked.
 
 ## Architecture
 
@@ -167,18 +169,41 @@ Seeds 3 residents, 544 events, 42 timeline entries to DynamoDB.
 
 ## Demo Guide
 
-1. **Login** as any persona to see role-specific navigation
-2. **Dashboard** → Real-time KPIs from DynamoDB
-3. **Care Navigation** → Ask AI clinical questions (real Bedrock)
-4. **Clinical Docs** → Generate SOAP notes with Bedrock AI
-5. **Prescriptions** → Upload → AI polypharmacy analysis
-6. **Monitoring** → Live event feed from sensors
-7. **Demo Panel** (bottom-right button) → Trigger scenarios:
-   - Fall Detection → writes event to DynamoDB + triggers alert
-   - Medication Missed → adherence workflow
-   - Choking → emergency escalation
-   - Wandering → geofence alert
-   - Vital Anomaly → health decline workflow
+### Quick Access
+
+Open **http://65.1.180.56:8080** in your browser. You'll see the login page with 4 persona cards. Click any card to log in instantly — password is `demo123`.
+
+### Recommended Demo Flow
+
+1. **Login as Caregiver** (Priya Nair, green card) → See the full operations dashboard
+2. **Residents** → Expand a resident card → Click "AI Health Insights" (sparkle icon) → Watch Bedrock generate analysis
+3. **Care Navigation** → Type "What diet should Kamala follow for diabetes?" → Real Bedrock AI response
+4. **Prescriptions** → Click "Check Interactions" → See polypharmacy analysis with generic alternatives
+5. **Demo Panel** (⚡ lightning bolt in sidebar) → Trigger a "Fall Detected" scenario → See it appear on Timeline/Alerts
+6. **Login as Doctor** (Dr. Rajesh, blue card) → **Clinical Docs** → Select resident → Generate a SOAP Note with Bedrock
+7. **Login as Ops** (Anand Kulkarni, amber card) → **Fleet Ops** → See fleet management, sensor health, workload
+
+### Key AI Features to Demo
+
+- **Care Navigation** → Ask any health question → Bedrock responds with patient context
+- **Clinical Docs** → Generate SOAP notes, discharge summaries, care plans from real data
+- **Polypharmacy** → Drug interaction analysis + PMBJP generic alternatives with cost savings
+- **Health Insights** → AI pattern analysis across sensor data for drift detection
+- **Voice Companion** → AI-generated responses using Amazon Polly text-to-speech
+
+## Deployment
+
+The platform is deployed on **AWS ECS Fargate** in the `ap-south-1` (Mumbai) region.
+
+- **Container:** Docker multi-stage build (Node.js 20 + Python 3.11)
+- **Registry:** ECR `aether-careops`
+- **Cluster:** ECS `aether-cluster`
+- **Port:** 8080
+
+To redeploy after changes:
+```bash
+./deploy.sh
+```
 
 ## Tech Stack
 

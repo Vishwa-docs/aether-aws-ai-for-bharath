@@ -202,11 +202,42 @@ export default function LoginPage() {
           </div>
         </div>
 
+        {/* ── Judge / Demo credentials banner ──────────────────────── */}
+        <div className="w-full max-w-3xl mt-8 animate-slide-up">
+          <div className="rounded-2xl border-2 border-dashed border-aether-300 bg-aether-50/60 px-6 py-5">
+            <div className="flex items-center gap-2 mb-3">
+              <Shield className="w-5 h-5 text-aether-600" />
+              <h3 className="text-sm font-bold text-aether-800 uppercase tracking-wide">
+                Hackathon Judge Access
+              </h3>
+            </div>
+            <p className="text-sm text-gray-600 leading-relaxed mb-3">
+              Click any persona card below to log in instantly. All accounts use password{' '}
+              <code className="px-2 py-0.5 rounded bg-white border border-gray-200 text-aether-700 font-bold text-sm">demo123</code>.
+              Each persona reveals a different view of the platform — try all four to see the full experience.
+            </p>
+            <div className="flex flex-wrap gap-2 text-xs text-gray-500">
+              <span className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-white border border-gray-200">
+                <Heart className="w-3 h-3 text-rose-500" /> Elder → Health dashboard, medications, companion
+              </span>
+              <span className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-white border border-gray-200">
+                <Shield className="w-3 h-3 text-emerald-500" /> Caregiver → Monitoring, alerts, residents
+              </span>
+              <span className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-white border border-gray-200">
+                <Stethoscope className="w-3 h-3 text-blue-500" /> Doctor → Clinical docs, prescriptions, AI
+              </span>
+              <span className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-white border border-gray-200">
+                <Building2 className="w-3 h-3 text-amber-500" /> Ops → Fleet view, analytics, site health
+              </span>
+            </div>
+          </div>
+        </div>
+
         {/* ── Divider ──────────────────────────────────────────────────── */}
-        <div className="w-full max-w-3xl flex items-center gap-4 my-10">
+        <div className="w-full max-w-3xl flex items-center gap-4 my-8">
           <div className="flex-1 h-px bg-gray-200" />
           <span className="text-xs font-medium text-gray-400 uppercase tracking-widest">
-            Quick Demo Access
+            Choose a Persona
           </span>
           <div className="flex-1 h-px bg-gray-200" />
         </div>
@@ -239,6 +270,9 @@ export default function LoginPage() {
                 {/* Name */}
                 <h3 className="mt-3 text-sm font-bold text-gray-900 leading-snug">{p.name}</h3>
 
+                {/* Email */}
+                <p className="mt-1 text-[11px] text-gray-400 font-mono">{p.email}</p>
+
                 {/* Description */}
                 <p className="mt-1.5 text-xs text-gray-500 leading-relaxed line-clamp-2">
                   {p.description}
@@ -248,7 +282,7 @@ export default function LoginPage() {
                 <span
                   className={`mt-4 inline-flex items-center gap-1 text-xs font-semibold bg-gradient-to-r ${p.color} ${p.colorTo} bg-clip-text text-transparent group-hover:underline`}
                 >
-                  Quick Login
+                  Click to Login
                   <LogIn className="w-3.5 h-3.5 text-gray-400 group-hover:text-gray-600 transition-colors" />
                 </span>
               </button>

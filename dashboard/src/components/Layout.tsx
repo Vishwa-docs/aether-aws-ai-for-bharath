@@ -34,6 +34,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useLiveData } from '../contexts/LiveDataContext';
 import { getActiveAlerts, getCommandCenterData } from '../data/mockData';
 import DemoPanel from './DemoPanel';
+import GuidedTour from './GuidedTour';
 import type { UserRole } from '../types';
 import type { CommandCenterData } from '../types';
 
@@ -540,6 +541,9 @@ export default function Layout() {
 
       {/* Live Demo Panel */}
       <DemoPanel />
+
+      {/* Guided Tour Modal (shows on first login) */}
+      <GuidedTour />
     </div>
   );
 }

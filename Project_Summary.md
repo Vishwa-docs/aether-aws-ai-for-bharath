@@ -114,11 +114,20 @@ Automated escalation from local caregiver notification → remote family alert �
 
 ## Demo Highlights
 
+**Live Demo:** http://65.1.180.56:8080 — Login with any persona card (password: `demo123`)
+
 1. **Live DynamoDB data** — Real residents, events, and timeline entries
 2. **Real-time Bedrock AI** — Ask care questions, generate documents, check drug interactions
 3. **Scenario simulation** — Trigger fall/choking/wandering/medication events that write to DynamoDB
 4. **Mobile PWA** — Install on phone, bottom tab navigation
 5. **Role switching** — Login as elder/caregiver/doctor/ops for different experiences
+6. **Guided Tour** — First-time login shows a step-by-step walkthrough of key features
+
+---
+
+## Deployment
+
+Deployed on **AWS ECS Fargate** (Mumbai region) with a Docker multi-stage build serving the FastAPI backend and React dashboard as a single container on port 8080.
 
 ---
 
