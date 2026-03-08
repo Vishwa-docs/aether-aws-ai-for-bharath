@@ -111,3 +111,4 @@ VK_Inputs/
 .env
 create_git_history.sh.vite/
 dashboard/tsconfig.tsbuildinfo
+.vite/
