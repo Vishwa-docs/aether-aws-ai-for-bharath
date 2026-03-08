@@ -112,3 +112,7 @@ VK_Inputs/
 create_git_history.sh.vite/
 dashboard/tsconfig.tsbuildinfo
 .vite/
+
+# Internal docs (not for repo)
+Pitch.md
+Presentation_Prompt.md

@@ -12,6 +12,8 @@ ECS_TASK_FAMILY="aether-task"
 CONTAINER_NAME="aether-app"
 IMAGE_TAG="latest"
 PORT=8080
+ALB_DNS="aether-alb-1978968670.ap-south-1.elb.amazonaws.com"
+TG_ARN="arn:aws:elasticloadbalancing:ap-south-1:841666121555:targetgroup/aether-tg/0bdca02f26471493"
 
 echo "═══════════════════════════════════════════"
 echo "  AETHER CareOps — AWS Deployment"
@@ -208,7 +210,7 @@ if [ -n "$EXISTING" ] && [ "$EXISTING" != "None" ]; then
     --force-new-deployment \
     --task-definition "$ECS_TASK_FAMILY" > /dev/null
 else
-  echo "  Creating new service..."
+  echo "  Creating new service with ALB..."
   aws ecs create-service \
     --region "$REGION" \
     --cluster "$ECS_CLUSTER" \
@@ -216,6 +218,7 @@ else
     --task-definition "$ECS_TASK_FAMILY" \
     --desired-count 1 \
     --launch-type FARGATE \
+    --load-balancers "targetGroupArn=$TG_ARN,containerName=$CONTAINER_NAME,containerPort=$PORT" \
     --network-configuration "awsvpcConfiguration={
       subnets=[$(echo $SUBNET_IDS | sed 's/,/,/g')],
       securityGroups=[$SG_ID],
@@ -223,52 +226,34 @@ else
     }" > /dev/null
 fi
 
-# ── Step 10: Wait and get public IP ───────────────────────
+# ── Step 10: Wait and verify via ALB ──────────────────────
 echo ""
-echo "▸ Waiting for task to start..."
-sleep 15
+echo "▸ Waiting for task to start and register with ALB..."
+sleep 30
 
 for i in $(seq 1 12); do
-  TASK_ARN=$(aws ecs list-tasks --region "$REGION" \
-    --cluster "$ECS_CLUSTER" \
-    --service-name "$ECS_SERVICE" \
-    --desired-status RUNNING \
-    --query 'taskArns[0]' --output text 2>/dev/null)
+  HEALTH=$(aws elbv2 describe-target-health --region "$REGION" \
+    --target-group-arn "$TG_ARN" \
+    --query 'TargetHealthDescriptions[0].TargetHealth.State' \
+    --output text 2>/dev/null)
 
-  if [ -n "$TASK_ARN" ] && [ "$TASK_ARN" != "None" ]; then
-    ENI_ID=$(aws ecs describe-tasks --region "$REGION" \
-      --cluster "$ECS_CLUSTER" \
-      --tasks "$TASK_ARN" \
-      --query 'tasks[0].attachments[0].details[?name==`networkInterfaceId`].value' \
-      --output text 2>/dev/null)
-
-    if [ -n "$ENI_ID" ] && [ "$ENI_ID" != "None" ]; then
-      PUBLIC_IP=$(aws ec2 describe-network-interfaces --region "$REGION" \
-        --network-interface-ids "$ENI_ID" \
-        --query 'NetworkInterfaces[0].Association.PublicIp' \
-        --output text 2>/dev/null)
-
-      if [ -n "$PUBLIC_IP" ] && [ "$PUBLIC_IP" != "None" ]; then
-        echo ""
-        echo "═══════════════════════════════════════════"
-        echo "  ✅ AETHER CareOps is LIVE!"
-        echo ""
-        echo "  🌐 Dashboard:  http://$PUBLIC_IP:$PORT"
-        echo "  📡 API Docs:   http://$PUBLIC_IP:$PORT/docs"
-        echo "  💡 Health:     http://$PUBLIC_IP:$PORT/api/health"
-        echo "═══════════════════════════════════════════"
-        exit 0
-      fi
-    fi
+  if [ "$HEALTH" = "healthy" ]; then
+    echo ""
+    echo "═══════════════════════════════════════════"
+    echo "  ✅ AETHER CareOps is LIVE!"
+    echo ""
+    echo "  🌐 Dashboard:  http://$ALB_DNS"
+    echo "  📡 API Docs:   http://$ALB_DNS/docs"
+    echo "  💡 Health:     http://$ALB_DNS/api/health"
+    echo "═══════════════════════════════════════════"
+    exit 0
   fi
 
-  echo "  Waiting... ($((i*10))s)"
+  echo "  Waiting for health check... ($((i*10))s) [status: $HEALTH]"
   sleep 10
 done
 
 echo ""
-echo "⏳ Service is still starting. Check the AWS Console:"
+echo "⏳ Service is still starting. Check:"
+echo "   http://$ALB_DNS"
 echo "   https://$REGION.console.aws.amazon.com/ecs/home?region=$REGION#/clusters/$ECS_CLUSTER/services/$ECS_SERVICE"
-echo ""
-echo "   Run this to get the public IP once it's running:"
-echo "   aws ecs list-tasks --cluster $ECS_CLUSTER --service-name $ECS_SERVICE --region $REGION"
