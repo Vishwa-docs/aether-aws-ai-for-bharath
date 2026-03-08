@@ -199,7 +199,7 @@ This slide is a placeholder for screenshots. Add the following screenshots manua
 [PASTE SCREENSHOT: Polypharmacy checker showing drug interactions and generic alternatives]
 [PASTE SCREENSHOT: Fleet Operations view with gateway health and sensor status]
 
-Bottom text: "Live at http://65.1.180.56:8080 — Login with any persona card, password: demo123"
+Bottom text: "Live at http://13.201.85.165:8080 — Login with any persona card, password: demo123"
 
 ---
 
@@ -272,7 +272,7 @@ Header: "Try AETHER"
 
 Content:
 
-🌐 Live Demo: http://65.1.180.56:8080
+🌐 Live Demo: http://13.201.85.165:8080
 📦 GitHub: https://github.com/Vishwa-docs/aether-aws-ai-for-bharath
 🎬 Demo Video: [Link to demo video — add after recording]
 

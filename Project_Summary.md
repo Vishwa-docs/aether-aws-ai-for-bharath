@@ -114,7 +114,7 @@ Automated escalation from local caregiver notification → remote family alert �
 
 ## Demo Highlights
 
-**Live Demo:** http://65.1.180.56:8080 — Login with any persona card (password: `demo123`)
+**Live Demo:** http://13.201.85.165:8080 — Login with any persona card (password: `demo123`)
 
 1. **Live DynamoDB data** — Real residents, events, and timeline entries
 2. **Real-time Bedrock AI** — Ask care questions, generate documents, check drug interactions

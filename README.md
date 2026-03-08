@@ -8,7 +8,7 @@
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python)](https://python.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.5-3178C6?logo=typescript)](https://typescriptlang.org)
 
-**Live Demo:** http://65.1.180.56:8080
+**Live Demo:** http://13.201.85.165:8080
 
 ---
 
@@ -171,7 +171,7 @@ Seeds 3 residents, 544 events, 42 timeline entries to DynamoDB.
 
 ### Quick Access
 
-Open **http://65.1.180.56:8080** in your browser. You'll see the login page with 4 persona cards. Click any card to log in instantly — password is `demo123`.
+Open **http://13.201.85.165:8080** in your browser. You'll see the login page with 4 persona cards. Click any card to log in instantly — password is `demo123`.
 
 ### Recommended Demo Flow
 
